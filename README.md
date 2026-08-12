@@ -26,6 +26,45 @@ printenv ROS_DISTRO
 
 ## 1. 클론
 
+### 1-a. GitHub 인증 — 먼저 해야 합니다
+
+이 저장소는 **private** 입니다. 인증 없이는 아래 클론이 그냥 실패합니다.
+
+```bash
+sudo apt update && sudo apt install -y gh && gh --version
+```
+
+> `E: Unable to locate package gh` 가 나오면 이 우분투 버전에는 없는 겁니다.
+> **`cli.github.com` apt 저장소를 추가하지 마세요** — 이 네트워크에서 차단됩니다
+> (HANDOFF.md §1). 대신 릴리스 .deb 을 직접 받습니다:
+>
+> ```bash
+> curl -s https://api.github.com/repos/cli/cli/releases/latest \
+>   | grep -o 'https://[^"]*linux_arm64\.deb'          # 젯슨은 arm64
+> curl -L -o /tmp/gh.deb '<위 URL>' && sudo dpkg -i /tmp/gh.deb
+> ```
+
+```bash
+gh auth login
+```
+
+> `GitHub.com` → `HTTPS` → `Authenticate Git with your credentials? **Yes**`
+> → `Login with a web browser` 순서로 고릅니다. 마지막 Yes 를 놓치면 git 인증이
+> 안 걸립니다.
+>
+> 8자리 코드와 URL 이 터미널에 뜹니다. **그 URL 은 폰이나 다른 PC 에서 열어도
+> 됩니다** — 젯슨에 화면이 없어도 상관없습니다.
+
+```bash
+gh auth status
+git config --get-all credential.helper
+```
+
+> `Logged in to github.com account ...` 와 `!/usr/bin/gh auth git-credential`
+> 이 나와야 정상입니다.
+
+### 1-b. 클론
+
 시뮬 패키지는 받지 않습니다. Gazebo 의존성을 젯슨에 끌고 오지 않기 위해서입니다.
 
 ```bash
@@ -33,10 +72,20 @@ git clone --filter=blob:none --sparse \
   https://github.com/DH-LDH/tetra-dsv-s-ros2.git ~/tetra_ws
 cd ~/tetra_ws
 git sparse-checkout set src/tetra_dsv_s_description src/tetra_dsv_s_bringup
+git config user.name "DH-LDH"
+git config user.email "ekgks3451@gmail.com"
 ls src/
 ```
 
 > `tetra_dsv_s_bringup` 과 `tetra_dsv_s_description` **둘만** 보여야 정상입니다.
+> `git config` 두 줄은 젯슨에서 커밋할 때 저자 정보가 붙게 하려는 것입니다.
+
+```bash
+git push --dry-run origin main
+```
+
+> `Everything up-to-date` 가 나오면 push 권한까지 확인된 겁니다. 젯슨에서 실측값을
+> 커밋해 올리고 개발 PC 에서 받아 이어서 작업하게 됩니다.
 
 ## 2. 의존 패키지 설치
 
