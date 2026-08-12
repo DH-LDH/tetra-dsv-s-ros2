@@ -49,22 +49,31 @@ def encode_speed(mm_s: int) -> bytes:
     return bytes([(mm_s >> 8) & 0xFF, mm_s & 0xFF])
 
 
-def read_reply(ser, want=16, timeout=0.3):
-    """STX 로 재동기화한 뒤 ETX 까지 읽고 LRC 한 바이트를 더 받습니다."""
+def read_reply(ser, timeout=0.3, idle_gap=0.02):
+    """STX 로 재동기화한 뒤, 더 이상 바이트가 안 들어오는 짧은 공백을
+    프레임 끝으로 봅니다.
+
+    예전에는 값이 ETX(0x03) 와 같은 바이트를 만나면 그 자리서 끊었는데,
+    X/Y/각도 같은 페이로드 안에도 0x03 이 흔히 등장합니다
+    (예: theta_raw=0x0379 의 상위 바이트). 그러면 실제 프레임보다 훨씬
+    일찍 잘려서 decode_bv() 가 매번 실패했습니다. 이 보드는 응답을 한
+    번에 버스트로 보내므로, 바이트 사이 공백(idle_gap)으로 끝을 판정하
+    는 쪽이 값에 의존하지 않아 안전합니다.
+    """
     deadline = time.time() + timeout
     buf = bytearray()
+    last_byte_time = None
     while time.time() < deadline:
         b = ser.read(1)
         if not b:
+            if buf and last_byte_time is not None \
+                    and time.time() - last_byte_time > idle_gap:
+                break
             continue
         if not buf and b[0] != STX:
             continue          # 이전 주기의 잔여 바이트 버리기
         buf += b
-        if len(buf) > 1 and b[0] == ETX:
-            buf += ser.read(1)
-            return bytes(buf)
-        if len(buf) >= want + 4:
-            return bytes(buf)
+        last_byte_time = time.time()
     return bytes(buf)
 
 

@@ -9,9 +9,13 @@
     [URDF] github.com/Hyulim-Group/TETRA-DSV-S
            tetraDS_description/urdf/tetraDS/{base.urdf.xacro, tetraDS.xacro}
 
-  Where the two disagree, the drive-board parameter table [MAN 표 4-3] wins for
-  anything the motion controller uses to compute odometry, because those are the
-  values the firmware itself applies. See wheel_separation / wheel_radius below.
+  Where the two disagree: [MAN 표 4-3] Para5 (438mm) is what the firmware's OWN
+  odometry/position-mode uses internally, but velocity commands (BV) take raw
+  per-wheel mm/s, so the host is the one that must convert cmd_vel using the
+  REAL physical track. Measured by tape (2026-08-12, center-of-contact to
+  center-of-contact): ~377mm — matching the vendor driver's own
+  `WHEEL_DISTANCE 0.377` (tetraDS.cpp:34), not the manual's Para5. See
+  wheel_separation below.
 
   Frame convention (inherited from [URDF], kept so the vendor stack stays
   drop-in compatible):
@@ -36,15 +40,17 @@
   <xacro:property name="body_center_x" value="-0.07525"/>
 
   <!-- Drive wheels.
-       [MAN 표 4-3] Para4 바퀴직경 = 203 mm  -> radius 0.1015
-       [MAN 표 4-3] Para5 바퀴간 거리 = 438 mm -> separation 0.438
-       NOTE: [URDF] instead implies radius 0.100 and separation 0.378
-       (wheel_offset_y 0.189). Those are visual-mesh mounting offsets, not the
-       kinematic track; the firmware converts wheel speeds using Para4/Para5,
-       so odometry and the diff-drive plugin MUST use these values or the robot
-       will report the wrong yaw rate. -->
+       [MAN 표 4-3] Para4 바퀴직경 = 203 mm  -> radius 0.1015 (matches tape measure)
+       [MAN 표 4-3] Para5 바퀴간 거리 = 438 mm -> firmware-internal odometry only,
+       NOT used for velocity control (BV takes raw per-wheel mm/s; the host
+       does cmd_vel -> wheel-speed conversion). 438mm also doesn't fit inside
+       the 430mm chassis width, physically.
+       MEASURED (tape, 2026-08-12): wheel-ground-contact center-to-center
+       ~377mm, matching vendor driver `WHEEL_DISTANCE 0.377` (tetraDS.cpp:34)
+       and vendor URDF wheel_offset_y (0.378) almost exactly. Using the
+       measured value here — see HANDOFF.md §2-(1) for the full reasoning. -->
   <xacro:property name="wheel_radius"     value="0.1015"/>
-  <xacro:property name="wheel_separation" value="0.438"/>
+  <xacro:property name="wheel_separation" value="0.377"/>
   <xacro:property name="wheel_width"      value="0.060"/>
   <xacro:property name="wheel_offset_x"   value="0.0"/>
 

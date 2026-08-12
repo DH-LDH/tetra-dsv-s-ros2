@@ -38,8 +38,8 @@ DEFAULT_PORT = "/dev/tetra_drive"
 
 DEFAULT_RATE_HZ = 30.0        # 벤더 ROS 1 노드와 동일
 
-# ⚠ HANDOFF §2-(1) 을 읽을 것. 시뮬은 0.438, 여기는 벤더와 같은 0.377 입니다.
-# 실기에서 좌우 바퀴 접지면 중심 간 거리를 재서 확정할 것.
+# 실측 완료 (2026-08-12, 줄자): 좌우 바퀴 접지면 중심 간 거리 ~377mm.
+# 벤더 드라이버 WHEEL_DISTANCE(0.377) 및 URDF 쪽과 일치. HANDOFF §2-(1) 참고.
 DEFAULT_WHEEL_SEPARATION = 0.377
 DEFAULT_WHEEL_RADIUS = 0.1015
 
