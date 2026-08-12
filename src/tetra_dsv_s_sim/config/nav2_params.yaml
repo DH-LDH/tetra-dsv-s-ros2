@@ -1,7 +1,8 @@
 # Nav2 parameters for the TETRA-DSV-S in a 3.00 x 2.40 m room.
 # Derived from scout_warehouse_sim/config/nav2_params.yaml; every value that
-# differs does so because of robot geometry or room scale. See git history
-# and the notes in slam_toolbox.yaml.
+# differs does so because of robot geometry or room scale. The reasoning lives
+# in HANDOFF.md section 5 and in the notes at each value below; git history only
+# starts at 2026-08-12, after most of this was already tuned.
 #
 # ======================================================================
 #  조정 파라미터 색인
