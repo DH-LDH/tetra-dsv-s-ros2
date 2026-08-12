@@ -12,6 +12,8 @@
 #
 # FILL IN THE SERIALS FIRST. Find them with:
 #     udevadm info -a -n /dev/ttyUSB0 | grep -E 'idVendor|idProduct|serial'
+# (drive board done 2026-08-12; power/sensor board and IMU still need this —
+# plug each adapter in one at a time and rerun the command above)
 #
 # If the adapters share a vendor/product AND have no unique serial - common
 # with cheap CH340 chips - match on the physical USB port path instead:
@@ -21,10 +23,18 @@
 # for this robot and delete the other line.
 
 # Drive board (CN20, 115200) -> /dev/tetra_drive
-SUBSYSTEM=="tty", ATTRS{idVendor}=="XXXX", ATTRS{idProduct}=="XXXX", ATTRS{serial}=="CHANGEME_DRIVE", SYMLINK+="tetra_drive", MODE="0666"
+# Filled in 2026-08-12: FTDI FT232R adapter, currently seated on CN20.
+#     udevadm info -a -n /dev/ttyUSB0 | grep -E 'idVendor|idProduct|serial'
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", ATTRS{serial}=="A9R3ADK4", SYMLINK+="tetra_drive", MODE="0666"
 
 # Power / sensor board (CN24, 115200) -> /dev/tetra_power
+# TODO: not yet filled in — this board's USB-serial adapter isn't plugged in
+# right now. Plug it in, then: udevadm info -a -n /dev/ttyUSB0 | grep -E 'idVendor|idProduct|serial'
 SUBSYSTEM=="tty", ATTRS{idVendor}=="XXXX", ATTRS{idProduct}=="XXXX", ATTRS{serial}=="CHANGEME_POWER", SYMLINK+="tetra_power", MODE="0666"
 
 # iAHRS IMU -> /dev/tetra_imu
+# TODO: not yet filled in — same as above, plug in and rerun udevadm.
+# NOTE: if this also turns out to be an FTDI FT232R (0403:6001, same as the
+# drive board), that's fine as long as its serial differs — FTDI programs a
+# unique serial per chip, so matching stays unambiguous.
 SUBSYSTEM=="tty", ATTRS{idVendor}=="XXXX", ATTRS{idProduct}=="XXXX", ATTRS{serial}=="CHANGEME_IMU", SYMLINK+="tetra_imu", MODE="0666"
