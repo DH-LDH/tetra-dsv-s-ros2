@@ -1,0 +1,15 @@
+# colcon 산출물. --symlink-install 이라 install/ 안이 소스로 가는 심볼릭 링크
+# 투성이인데, 절대경로라 다른 머신(=젯슨)에서 전부 깨집니다. 반드시 제외.
+build/
+install/
+log/
+
+# 맵은 커밋합니다 (각 18 KB). 재현하려면 시뮬을 띄우고 한 바퀴 돌려야 하는데
+# 그 비용이 파일 크기보다 큽니다. maps/*.pgm 은 .gitignore 하지 말 것.
+
+__pycache__/
+*.pyc
+*.swp
+*~
+.vscode/
+compile_commands.json

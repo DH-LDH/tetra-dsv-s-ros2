@@ -1,0 +1,216 @@
+<?xml version="1.0"?>
+<!--
+  TETRA-DSV-S mobile base.
+
+  Every dimension below is traceable to one of two official sources:
+
+    [MAN]  TETRA-DSV-S Operation Manual v231019 (Hyulim Networks)
+           표 1-1 Specifications / 표 2-1 Motor & Encoder / 표 4-3 구동보드 파라미터
+    [URDF] github.com/Hyulim-Group/TETRA-DSV-S
+           tetraDS_description/urdf/tetraDS/{base.urdf.xacro, tetraDS.xacro}
+
+  Where the two disagree, the drive-board parameter table [MAN 표 4-3] wins for
+  anything the motion controller uses to compute odometry, because those are the
+  values the firmware itself applies. See wheel_separation / wheel_radius below.
+
+  Frame convention (inherited from [URDF], kept so the vendor stack stays
+  drop-in compatible):
+    base_footprint  : ground plane under the drive axle
+    base_link       : ON THE DRIVE AXLE, not the body centre.
+                      The body extends x in [-0.318, +0.1675], so the geometric
+                      centre sits 75.25 mm BEHIND base_link.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ==================================================================== -->
+  <!-- Official parameters                                                   -->
+  <!-- ==================================================================== -->
+
+  <!-- Overall envelope: 485 x 430 x 380 mm  [MAN 표 1-1] -->
+  <xacro:property name="base_x_size" value="0.485"/>
+  <xacro:property name="base_y_size" value="0.430"/>
+  <xacro:property name="base_z_size" value="0.380"/>
+
+  <!-- Body centre offset from base_link, from the base_footprint outline
+       box (0.4855 x 0.430) drawn at x = -0.07525 in [URDF]. -->
+  <xacro:property name="body_center_x" value="-0.07525"/>
+
+  <!-- Drive wheels.
+       [MAN 표 4-3] Para4 바퀴직경 = 203 mm  -> radius 0.1015
+       [MAN 표 4-3] Para5 바퀴간 거리 = 438 mm -> separation 0.438
+       NOTE: [URDF] instead implies radius 0.100 and separation 0.378
+       (wheel_offset_y 0.189). Those are visual-mesh mounting offsets, not the
+       kinematic track; the firmware converts wheel speeds using Para4/Para5,
+       so odometry and the diff-drive plugin MUST use these values or the robot
+       will report the wrong yaw rate. -->
+  <xacro:property name="wheel_radius"     value="0.1015"/>
+  <xacro:property name="wheel_separation" value="0.438"/>
+  <xacro:property name="wheel_width"      value="0.060"/>
+  <xacro:property name="wheel_offset_x"   value="0.0"/>
+
+  <!-- Rear caster. x from [URDF] rear_caster_rotate_joint.
+       Radius is derived so the caster rests exactly on the ground plane
+       (the manual's "75mm" in 그림 2-4 is the yoke plate, not the roller). -->
+  <xacro:property name="caster_offset_x" value="-0.230"/>
+  <xacro:property name="caster_radius"   value="0.0475"/>
+
+  <!-- Mass: robot 28 kg, max payload 30 kg [MAN 표 1-1].
+       Split so the chassis carries the bulk and the wheels a plausible share
+       of the 100 W PMSM + 20:1 reducer assemblies. -->
+  <xacro:property name="chassis_mass" value="22.0"/>
+  <xacro:property name="wheel_mass"   value="2.5"/>
+  <xacro:property name="caster_mass"  value="0.5"/>
+
+  <!-- Ground clearance, from the 32.5 mm dimension in 그림 2-2. It checks out:
+       32.5 + 69 = 101.5 mm, exactly the wheel radius, so the drawing's vertical
+       chain is measured from the chassis underside and 69 mm is the underside
+       to the wheel axle.
+       This is not cosmetic. Without it the chassis box reaches the floor, and a
+       flat 0.485 x 0.430 m face resting on the ground at the default friction
+       of 1.0 physically prevents the robot from yawing at all. -->
+  <xacro:property name="ground_clearance" value="0.0325"/>
+  <xacro:property name="body_height" value="${base_z_size - ground_clearance}"/>
+  <xacro:property name="body_center_z"
+                  value="${ground_clearance + body_height / 2.0 - wheel_radius}"/>
+
+  <!-- Centre of gravity, 129.16 mm above the chassis underside per 그림 2-2. -->
+  <xacro:property name="cog_x" value="${body_center_x}"/>
+  <xacro:property name="cog_z" value="${ground_clearance + 0.12916 - wheel_radius}"/>
+
+  <!-- Top surface of the mount plate, in base_link coordinates.
+       Total height 380 mm above ground, base_link sits at wheel_radius. -->
+  <xacro:property name="mount_plate_z" value="${base_z_size - wheel_radius}"/>
+
+  <!-- Performance envelope, exported for the controller/Nav2 configs.
+       [MAN 표 1-1] Max Speed 2.0 m/s, but [MAN 표 4-3] Para8 최대속도 = 1500 mm/s
+       is the firmware ceiling actually enforced, so that is the one to plan for.
+       [MAN 표 1-1] Turning radius 714 mm. -->
+  <xacro:property name="max_linear_velocity"  value="1.5"/>
+  <xacro:property name="max_angular_velocity" value="1.5"/>
+
+  <!-- ==================================================================== -->
+  <!-- Chassis                                                               -->
+  <!-- ==================================================================== -->
+  <link name="base_footprint"/>
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child  link="base_link"/>
+    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_link">
+    <xacro:box_inertial mass="${chassis_mass}"
+                        x="${base_x_size}" y="${base_y_size}" z="${body_height}">
+      <origin xyz="${cog_x} 0 ${cog_z}" rpy="0 0 0"/>
+    </xacro:box_inertial>
+
+    <!-- Body shell: chassis underside up to the mount plate. Its bottom face
+         sits at ground_clearance, NOT at the ground - see the note there. -->
+    <visual>
+      <origin xyz="${body_center_x} 0 ${body_center_z}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${base_x_size} ${base_y_size} ${body_height}"/>
+      </geometry>
+      <material name="tetra_body"/>
+    </visual>
+    <collision>
+      <origin xyz="${body_center_x} 0 ${body_center_z}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${base_x_size} ${base_y_size} ${body_height}"/>
+      </geometry>
+    </collision>
+
+    <!-- Mount plate: 409.9 x 300 mm tap field [MAN 그림 2-3]. Visual only. -->
+    <visual>
+      <origin xyz="${body_center_x} 0 ${mount_plate_z + 0.005}" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.4099 0.300 0.010"/>
+      </geometry>
+      <material name="tetra_accent"/>
+    </visual>
+  </link>
+
+  <!-- ==================================================================== -->
+  <!-- Drive wheels                                                          -->
+  <!-- ==================================================================== -->
+  <xacro:macro name="drive_wheel" params="prefix reflect">
+    <link name="${prefix}_wheel_link">
+      <xacro:cylinder_inertial mass="${wheel_mass}"
+                               radius="${wheel_radius}" length="${wheel_width}">
+        <origin xyz="0 0 0" rpy="${pi/2.0} 0 0"/>
+      </xacro:cylinder_inertial>
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2.0} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="tetra_wheel"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi/2.0} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child  link="${prefix}_wheel_link"/>
+      <origin xyz="${wheel_offset_x} ${reflect * wheel_separation / 2.0} 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <dynamics damping="0.05" friction="0.1"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:drive_wheel prefix="left"  reflect="1"/>
+  <xacro:drive_wheel prefix="right" reflect="-1"/>
+
+  <!-- ==================================================================== -->
+  <!-- Rear caster                                                           -->
+  <!-- ==================================================================== -->
+  <!-- Modelled as a free-spinning low-friction sphere rather than the real
+       yoke + roller pair. A 2-DoF swivel caster is a well known source of
+       jitter in Gazebo and contributes nothing to SLAM; the sphere reproduces
+       the same three-point ground contact. -->
+  <link name="rear_caster_link">
+    <xacro:sphere_inertial mass="${caster_mass}" radius="${caster_radius}">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:sphere_inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><sphere radius="${caster_radius}"/></geometry>
+      <material name="tetra_caster"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry><sphere radius="${caster_radius}"/></geometry>
+    </collision>
+  </link>
+
+  <!-- Swivel, not fixed, and that matters for more than realism: sdformat's
+       URDF importer lumps fixed-joint children into their parent link, and any
+       <gazebo reference="..."> block naming a lumped link is then silently
+       dropped. As a fixed joint this caster lost its low-friction surface and
+       reverted to the default mu of 1.0, which fought every turn. A revolute
+       joint keeps the link - and its friction - alive in the converted SDF. -->
+  <joint name="rear_caster_joint" type="continuous">
+    <parent link="base_link"/>
+    <child  link="rear_caster_link"/>
+    <origin xyz="${caster_offset_x} 0 ${caster_radius - wheel_radius}" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.001" friction="0.0"/>
+  </joint>
+
+  <!-- ==================================================================== -->
+  <!-- On-board IMU (iAHRS). Pose from [URDF] base_link_to_imu_link.          -->
+  <!-- ==================================================================== -->
+  <link name="imu_link"/>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="imu_link"/>
+    <origin xyz="0 0 0.232" rpy="0 0 0"/>
+  </joint>
+
+</robot>

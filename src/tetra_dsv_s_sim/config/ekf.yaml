@@ -1,0 +1,81 @@
+# robot_localization EKF fusing wheel encoders with the IMU.
+#
+# Why this exists: the drive wheels slip during turns, and DiffDrive's odometry
+# assumes they do not. Measured on this robot, wheel odometry over-reports
+# rotation by roughly 12%, which after one 12 s in-place spin was enough to put
+# a "SUCCEEDED" Nav2 goal 0.68 m away from where the robot actually was.
+#
+# The split of responsibilities is the whole point:
+#   wheel encoders -> vx     (accurate; a rolling wheel measures distance well)
+#   IMU gyro       -> vyaw   (immune to slip, which is exactly what wheels are not)
+#
+# Deliberately NOT used:
+#   wheel vyaw            - the slipping signal being replaced
+#   wheel absolute x/y/yaw - integrating them here would re-import the drift
+#   IMU absolute orientation - Gazebo reports it against the world frame, which
+#     is ground truth in disguise. The real iAHRS has no such luxury, so relying
+#     on it would flatter the simulation and hide error that appears on hardware.
+ekf_filter_node:
+  ros__parameters:
+    use_sim_time: true
+    frequency: 50.0
+    sensor_timeout: 0.2
+    two_d_mode: true              # planar robot; kills z/roll/pitch drift outright
+    publish_tf: true
+    transform_time_offset: 0.0
+    transform_timeout: 0.0
+    print_diagnostics: false
+    debug: false
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_footprint
+    world_frame: odom             # odom-frame EKF: continuous, no jumps. SLAM
+                                  # still owns map->odom on top of this.
+
+    #                x      y      z
+    #                roll   pitch  yaw
+    #                vx     vy     vz
+    #                vroll  vpitch vyaw
+    #                ax     ay     az
+    odom0: /wheel_odometry
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  false, false,
+                   false, false, false,
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    imu0: /imu/data
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_remove_gravitational_acceleration: true
+    imu0_queue_size: 10
+
+    # Trust the gyro's yaw rate well above anything the wheels claim about heading.
+    # Flat 15x15, diagonal only. Every element must be written as a float:
+    # a bare 0 makes the sequence mixed-type and rcl refuses the whole file
+    # with "Sequence should be of same type", killing the node at startup.
+    process_noise_covariance:
+      [0.001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,   # x
+       0.0, 0.001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,   # y
+       0.0, 0.0, 0.000001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,   # z
+       0.0, 0.0, 0.0, 0.000001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,   # roll
+       0.0, 0.0, 0.0, 0.0, 0.000001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,   # pitch
+       0.0, 0.0, 0.0, 0.0, 0.0, 0.002, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,   # yaw
+       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.005, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,   # vx
+       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.000001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,   # vy
+       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.000001, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,   # vz
+       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.000001, 0.0, 0.0, 0.0, 0.0, 0.0,   # vroll
+       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.000001, 0.0, 0.0, 0.0, 0.0,   # vpitch
+       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.003, 0.0, 0.0, 0.0,   # vyaw
+       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.001, 0.0, 0.0,   # ax
+       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.000001, 0.0,   # ay
+       0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.000001]   # az

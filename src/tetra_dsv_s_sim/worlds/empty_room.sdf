@@ -1,0 +1,115 @@
+<?xml version="1.0" ?>
+<!--
+  Bare 3.00 x 2.40 m room, matching the real deployment space.
+
+  This is the "does the pipeline run at all" world. Every wall is visible from
+  every point in it, so the scan matcher is always fully constrained, almost no
+  odometry drift accumulates, and slam_toolbox will likely never fire a loop
+  closure. That makes it a poor test of loop closure specifically - use
+  loop_room.sdf for that - but a good, fast smoke test of the bridge, TF tree
+  and mapping path.
+
+  Note also that a bare rectangle is 180-degree symmetric, so scan matching
+  alone cannot tell the room from itself rotated. Only odometry breaks the tie.
+-->
+<sdf version="1.9">
+  <world name="tetra_empty_room">
+
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system"
+            name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system"
+            name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system"
+            name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-contact-system"
+            name="ignition::gazebo::systems::Contact"/>
+
+    <gravity>0 0 -9.8</gravity>
+
+    <scene>
+      <ambient>0.6 0.6 0.6 1</ambient>
+      <background>0.75 0.80 0.86 1</background>
+      <grid>false</grid>
+    </scene>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 8 0 0 0</pose>
+      <diffuse>0.9 0.9 0.9 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.4 0.3 -0.9</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>20 20</size></plane></geometry>
+          <material>
+            <ambient>0.55 0.55 0.58 1</ambient>
+            <diffuse>0.65 0.65 0.68 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Interior spans x in [-1.5, 1.5] and y in [-1.2, 1.2]: 3.00 x 2.40 m.
+         Walls are 2 m tall so the +15 deg top beam of a VLP-16 sitting at
+         1.05 m still lands on wall rather than escaping over it. -->
+    <model name="room">
+      <static>true</static>
+      <link name="walls">
+
+        <collision name="wall_xpos_collision">
+          <pose>1.55 0 1.0 0 0 0</pose>
+          <geometry><box><size>0.1 2.6 2.0</size></box></geometry>
+        </collision>
+        <visual name="wall_xpos_visual">
+          <pose>1.55 0 1.0 0 0 0</pose>
+          <geometry><box><size>0.1 2.6 2.0</size></box></geometry>
+          <material><ambient>0.8 0.8 0.78 1</ambient><diffuse>0.9 0.9 0.88 1</diffuse></material>
+        </visual>
+
+        <collision name="wall_xneg_collision">
+          <pose>-1.55 0 1.0 0 0 0</pose>
+          <geometry><box><size>0.1 2.6 2.0</size></box></geometry>
+        </collision>
+        <visual name="wall_xneg_visual">
+          <pose>-1.55 0 1.0 0 0 0</pose>
+          <geometry><box><size>0.1 2.6 2.0</size></box></geometry>
+          <material><ambient>0.8 0.8 0.78 1</ambient><diffuse>0.9 0.9 0.88 1</diffuse></material>
+        </visual>
+
+        <collision name="wall_ypos_collision">
+          <pose>0 1.25 1.0 0 0 0</pose>
+          <geometry><box><size>3.2 0.1 2.0</size></box></geometry>
+        </collision>
+        <visual name="wall_ypos_visual">
+          <pose>0 1.25 1.0 0 0 0</pose>
+          <geometry><box><size>3.2 0.1 2.0</size></box></geometry>
+          <material><ambient>0.8 0.8 0.78 1</ambient><diffuse>0.9 0.9 0.88 1</diffuse></material>
+        </visual>
+
+        <collision name="wall_yneg_collision">
+          <pose>0 -1.25 1.0 0 0 0</pose>
+          <geometry><box><size>3.2 0.1 2.0</size></box></geometry>
+        </collision>
+        <visual name="wall_yneg_visual">
+          <pose>0 -1.25 1.0 0 0 0</pose>
+          <geometry><box><size>3.2 0.1 2.0</size></box></geometry>
+          <material><ambient>0.8 0.8 0.78 1</ambient><diffuse>0.9 0.9 0.88 1</diffuse></material>
+        </visual>
+
+      </link>
+    </model>
+
+  </world>
+</sdf>

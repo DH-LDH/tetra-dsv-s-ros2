@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ==================================================================== -->
+  <!-- Materials                                                             -->
+  <!-- ==================================================================== -->
+  <material name="tetra_body">   <color rgba="0.13 0.13 0.14 1.0"/></material>
+  <material name="tetra_accent"> <color rgba="0.70 0.09 0.12 1.0"/></material>
+  <material name="tetra_wheel">  <color rgba="0.20 0.20 0.22 1.0"/></material>
+  <material name="tetra_caster"> <color rgba="0.75 0.78 0.45 1.0"/></material>
+  <material name="mast_gray">    <color rgba="0.35 0.36 0.38 1.0"/></material>
+  <material name="sensor_black"> <color rgba="0.02 0.02 0.02 1.0"/></material>
+  <material name="frame_marker"> <color rgba="0.0  0.8  0.0  0.5"/></material>
+
+  <!-- ==================================================================== -->
+  <!-- Inertia helpers                                                       -->
+  <!-- ==================================================================== -->
+  <xacro:macro name="box_inertial" params="mass x y z *origin">
+    <inertial>
+      <xacro:insert_block name="origin"/>
+      <mass value="${mass}"/>
+      <inertia ixx="${mass * (y*y + z*z) / 12.0}" ixy="0" ixz="0"
+               iyy="${mass * (x*x + z*z) / 12.0}" iyz="0"
+               izz="${mass * (x*x + y*y) / 12.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- Cylinder spinning about its own Z; caller rotates via *origin. -->
+  <xacro:macro name="cylinder_inertial" params="mass radius length *origin">
+    <inertial>
+      <xacro:insert_block name="origin"/>
+      <mass value="${mass}"/>
+      <inertia ixx="${mass * (3.0*radius*radius + length*length) / 12.0}" ixy="0" ixz="0"
+               iyy="${mass * (3.0*radius*radius + length*length) / 12.0}" iyz="0"
+               izz="${mass * radius * radius / 2.0}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="sphere_inertial" params="mass radius *origin">
+    <inertial>
+      <xacro:insert_block name="origin"/>
+      <mass value="${mass}"/>
+      <inertia ixx="${2.0 * mass * radius * radius / 5.0}" ixy="0" ixz="0"
+               iyy="${2.0 * mass * radius * radius / 5.0}" iyz="0"
+               izz="${2.0 * mass * radius * radius / 5.0}"/>
+    </inertial>
+  </xacro:macro>
+
+</robot>

@@ -1,0 +1,126 @@
+<?xml version="1.0"?>
+<!--
+  Sensor mast bolted to the TETRA-DSV-S mount plate, carrying a Velodyne VLP-16.
+
+  The mast is a rectangular column measured on the physical robot:
+      200 mm left-right (y), 130 mm fore-aft (x), 630 mm tall (z).
+
+  Its planar position is NOT known from any drawing. It is parameterised here
+  and defaults to base_link x = 0, y = 0 as specified. Be aware that base_link
+  sits on the DRIVE AXLE, which is 75.25 mm forward of the body's geometric
+  centre - so x = 0 puts the mast slightly ahead of centre, not on it. To centre
+  the mast on the body instead, set mast_offset_x to -0.07525.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ==================================================================== -->
+  <!-- Mast geometry                                                         -->
+  <!-- ==================================================================== -->
+  <xacro:property name="mast_x_size" value="0.130"/>   <!-- fore-aft  -->
+  <xacro:property name="mast_y_size" value="0.200"/>   <!-- left-right -->
+  <xacro:property name="mast_z_size" value="0.630"/>
+  <xacro:property name="mast_mass"   value="3.0"/>
+
+  <!-- Planar placement on the mount plate. Measure and correct these two. -->
+  <xacro:property name="mast_offset_x" value="0.0"/>
+  <xacro:property name="mast_offset_y" value="0.0"/>
+
+  <!-- Derived heights, all in base_link coordinates. -->
+  <xacro:property name="mast_base_z"   value="${mount_plate_z}"/>
+  <xacro:property name="mast_center_z" value="${mast_base_z + mast_z_size / 2.0}"/>
+  <xacro:property name="mast_top_z"    value="${mast_base_z + mast_z_size}"/>
+
+  <!-- ==================================================================== -->
+  <!-- Velodyne VLP-16 (datasheet: 103.3 mm dia, 71.7 mm tall, 0.83 kg)      -->
+  <!-- Optical centre sits 37.7 mm above the mounting face.                  -->
+  <!-- ==================================================================== -->
+  <xacro:property name="vlp16_radius"       value="0.05165"/>
+  <xacro:property name="vlp16_height"       value="0.0717"/>
+  <xacro:property name="vlp16_mass"         value="0.83"/>
+  <xacro:property name="vlp16_optical_rise" value="0.0377"/>
+
+  <!-- ==================================================================== -->
+  <!-- Mast column                                                           -->
+  <!-- ==================================================================== -->
+  <link name="lidar_mast_link">
+    <xacro:box_inertial mass="${mast_mass}"
+                        x="${mast_x_size}" y="${mast_y_size}" z="${mast_z_size}">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:box_inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${mast_x_size} ${mast_y_size} ${mast_z_size}"/>
+      </geometry>
+      <material name="mast_gray"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${mast_x_size} ${mast_y_size} ${mast_z_size}"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="lidar_mast_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="lidar_mast_link"/>
+    <origin xyz="${mast_offset_x} ${mast_offset_y} ${mast_center_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ==================================================================== -->
+  <!-- VLP-16 on top of the mast                                             -->
+  <!-- ==================================================================== -->
+  <link name="velodyne_link">
+    <xacro:cylinder_inertial mass="${vlp16_mass}"
+                             radius="${vlp16_radius}" length="${vlp16_height}">
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+    </xacro:cylinder_inertial>
+    <visual>
+      <origin xyz="0 0 ${vlp16_height/2.0 - vlp16_optical_rise}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${vlp16_radius}" length="${vlp16_height}"/>
+      </geometry>
+      <material name="sensor_black"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${vlp16_height/2.0 - vlp16_optical_rise}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="${vlp16_radius}" length="${vlp16_height}"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Child of the mast, so re-siting the mast moves the LiDAR with it. -->
+  <joint name="velodyne_joint" type="fixed">
+    <parent link="lidar_mast_link"/>
+    <child  link="velodyne_link"/>
+    <origin xyz="0 0 ${mast_z_size/2.0 + vlp16_optical_rise}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ==================================================================== -->
+  <!-- Camera observed at roughly mid-mast (~300 mm up the front face)        -->
+  <!-- ==================================================================== -->
+  <!-- Declared as a TF frame only. SLAM runs off the VLP-16 alone, so no
+       driver, no Gazebo sensor, and no image topic is created for it. Having
+       the frame in the tree now means adding the camera later is a config
+       change rather than a URDF change. Height and model are unconfirmed. -->
+  <xacro:property name="mast_camera_height" value="0.300"/>
+
+  <link name="mast_camera_link"/>
+  <joint name="mast_camera_joint" type="fixed">
+    <parent link="lidar_mast_link"/>
+    <child  link="mast_camera_link"/>
+    <origin xyz="${mast_x_size / 2.0} 0 ${mast_camera_height - mast_z_size / 2.0}"
+            rpy="0 0 0"/>
+  </joint>
+
+  <!-- REP-103 optical frame (z forward, x right, y down) for the same camera. -->
+  <link name="mast_camera_optical_frame"/>
+  <joint name="mast_camera_optical_joint" type="fixed">
+    <parent link="mast_camera_link"/>
+    <child  link="mast_camera_optical_frame"/>
+    <origin xyz="0 0 0" rpy="${-pi/2.0} 0 ${-pi/2.0}"/>
+  </joint>
+
+</robot>

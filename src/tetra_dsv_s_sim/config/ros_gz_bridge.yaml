@@ -1,0 +1,59 @@
+# Gazebo <-> ROS 2 topic bridge for the TETRA-DSV-S simulation.
+#
+# Gazebo-side names are all under /tetra/* and are pinned in the robot's
+# gazebo.xacro, so none of them embed the world name. That means the same bridge
+# config works for empty_room.sdf, loop_room.sdf and anything added later.
+
+- ros_topic_name: /clock
+  gz_topic_name: /clock
+  ros_type_name: rosgraph_msgs/msg/Clock
+  gz_type_name: ignition.msgs.Clock
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /cmd_vel
+  gz_topic_name: /tetra/cmd_vel
+  ros_type_name: geometry_msgs/msg/Twist
+  gz_type_name: ignition.msgs.Twist
+  direction: ROS_TO_GZ
+
+# Ground-truth odometry from the OdometryPublisher system.
+- ros_topic_name: /odometry
+  gz_topic_name: /tetra/odometry
+  ros_type_name: nav_msgs/msg/Odometry
+  gz_type_name: ignition.msgs.Odometry
+  direction: GZ_TO_ROS
+
+# Wheel-encoder odometry from DiffDrive, kept separate so the two can be
+# compared later when ground truth gets swapped out for wheel + IMU fusion.
+- ros_topic_name: /wheel_odometry
+  gz_topic_name: /tetra/wheel_odometry
+  ros_type_name: nav_msgs/msg/Odometry
+  gz_type_name: ignition.msgs.Odometry
+  direction: GZ_TO_ROS
+
+# odom -> base_footprint. map -> odom comes from slam_toolbox, and everything
+# below base_link comes from robot_state_publisher.
+- ros_topic_name: /tf
+  gz_topic_name: /tetra/tf
+  ros_type_name: tf2_msgs/msg/TFMessage
+  gz_type_name: ignition.msgs.Pose_V
+  direction: GZ_TO_ROS
+
+# The gpu_lidar's base topic carries a LaserScan; the cloud is on "<base>/points".
+- ros_topic_name: /points
+  gz_topic_name: /tetra/velodyne/points
+  ros_type_name: sensor_msgs/msg/PointCloud2
+  gz_type_name: ignition.msgs.PointCloudPacked
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /imu/data
+  gz_topic_name: /tetra/imu
+  ros_type_name: sensor_msgs/msg/Imu
+  gz_type_name: ignition.msgs.IMU
+  direction: GZ_TO_ROS
+
+- ros_topic_name: /joint_states
+  gz_topic_name: /tetra/joint_states
+  ros_type_name: sensor_msgs/msg/JointState
+  gz_type_name: ignition.msgs.Model
+  direction: GZ_TO_ROS

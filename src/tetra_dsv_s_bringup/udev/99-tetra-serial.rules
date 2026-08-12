@@ -1,0 +1,30 @@
+# TETRA-DSV-S USB-serial port pinning.
+#
+# Why this is not optional: the robot has at least three USB-serial devices
+# (drive board CN20, power/sensor board CN24, iAHRS IMU). /dev/ttyUSB0..2 are
+# handed out in enumeration order, which changes between boots and whenever a
+# cable is re-seated. Bind the wrong one and the drive node opens the IMU,
+# writes BV frames into it, and reports nothing but read timeouts.
+#
+# Install on the Jetson:
+#     sudo cp 99-tetra-serial.rules /etc/udev/rules.d/
+#     sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# FILL IN THE SERIALS FIRST. Find them with:
+#     udevadm info -a -n /dev/ttyUSB0 | grep -E 'idVendor|idProduct|serial'
+#
+# If the adapters share a vendor/product AND have no unique serial - common
+# with cheap CH340 chips - match on the physical USB port path instead:
+#     KERNELS=="1-2.3:1.0"    (from: udevadm info -a -n /dev/ttyUSB0 | grep KERNELS)
+# That binds to the socket rather than the device, so it survives swaps but
+# breaks if the cable moves to another socket. Pick whichever is more stable
+# for this robot and delete the other line.
+
+# Drive board (CN20, 115200) -> /dev/tetra_drive
+SUBSYSTEM=="tty", ATTRS{idVendor}=="XXXX", ATTRS{idProduct}=="XXXX", ATTRS{serial}=="CHANGEME_DRIVE", SYMLINK+="tetra_drive", MODE="0666"
+
+# Power / sensor board (CN24, 115200) -> /dev/tetra_power
+SUBSYSTEM=="tty", ATTRS{idVendor}=="XXXX", ATTRS{idProduct}=="XXXX", ATTRS{serial}=="CHANGEME_POWER", SYMLINK+="tetra_power", MODE="0666"
+
+# iAHRS IMU -> /dev/tetra_imu
+SUBSYSTEM=="tty", ATTRS{idVendor}=="XXXX", ATTRS{idProduct}=="XXXX", ATTRS{serial}=="CHANGEME_IMU", SYMLINK+="tetra_imu", MODE="0666"

@@ -1,0 +1,252 @@
+<?xml version="1.0"?>
+<!--
+  Gazebo Fortress (ignition-gazebo6) systems for the TETRA-DSV-S.
+
+  Plugin filenames follow the Fortress naming used by the reference Scout
+  workspace. On Gazebo Harmonic these become gz-sim-* / gz::sim::systems::*,
+  which is exactly why development targets Humble + Fortress in a container
+  rather than the host's Jazzy + Harmonic.
+
+  Gazebo publishes on the /tetra/* namespace; ros_gz_bridge maps those onto the
+  plain ROS topic names the SLAM stack expects.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ==================================================================== -->
+  <!--  조정 파라미터 — 이 블록만 손대면 됩니다                              -->
+  <!--                                                                      -->
+  <!--  아래 값들은 전부 이 파일 안에서만 쓰입니다. 실제 하드웨어 수치는     -->
+  <!--  tetra_dsv_s_base.xacro / sensor_mast.xacro 상단에 따로 있습니다.     -->
+  <!-- ==================================================================== -->
+
+  <!-- 접지 마찰. 캐스터는 일부러 미끄럽게 둡니다 — 고정 롤러처럼 회전을
+       방해하면 안 되기 때문. 0.05를 1.0으로 올리면 로봇이 제자리 회전을
+       못 합니다(§6-1의 그 증상). -->
+  <xacro:property name="wheel_mu"  value="1.0"/>
+  <xacro:property name="caster_mu" value="0.05"/>
+
+  <!-- 구동 가감속 한계. 속도 한계는 base.xacro의 max_linear/angular_velocity. -->
+  <xacro:property name="max_linear_accel"  value="1.0"/>
+  <xacro:property name="max_angular_accel" value="2.0"/>
+
+  <!-- VLP-16. samples 900 = 방위각 0.4도로 데이터시트와 같습니다. 더 올리면
+       프레임레이트만 깎이고 2D 점유격자에는 도움이 안 됩니다. -->
+  <xacro:arg name="lidar_update_rate" default="10"/>
+  <xacro:property name="lidar_h_samples"  value="900"/>
+  <xacro:property name="lidar_v_samples"  value="16"/>
+  <xacro:property name="lidar_v_angle"    value="15.0"/>   <!-- +/- deg -->
+  <xacro:property name="lidar_range_min"  value="0.40"/>
+  <xacro:property name="lidar_range_max"  value="100.0"/>
+  <xacro:property name="lidar_noise_std"  value="0.008"/>
+
+  <!-- IMU. Gazebo 기본값은 무노이즈라 그대로 쓰면 EKF가 실제 iAHRS보다
+       과하게 좋게 나와 실기 오차를 숨깁니다(§6-6). 아래는 평범한 MEMS
+       자이로 수치이고, bias 항이 없으면 융합 결과가 허구가 됩니다. -->
+  <xacro:property name="imu_update_rate"    value="100"/>
+  <xacro:property name="imu_gyro_std"       value="0.002"/>
+  <xacro:property name="imu_gyro_bias"      value="0.0001"/>
+  <xacro:property name="imu_gyro_bias_std"  value="0.00005"/>
+  <xacro:property name="imu_accel_std"      value="0.017"/>
+
+  <!-- ground truth 오도메트리 발행 -->
+  <xacro:property name="gt_publish_rate" value="50"/>
+  <xacro:property name="gt_noise"        value="0.002"/>
+
+  <!-- ==================================================================== -->
+  <!--  이 아래는 배선입니다. 값을 바꾸려면 위 블록에서.                     -->
+  <!-- ==================================================================== -->
+
+  <!-- Which source drives the odom -> base_footprint transform.
+
+       wheel         DiffDrive integrates the wheel joints, so slip during turns
+                     accumulates real heading error. This is what the physical
+                     robot does with its encoders, and it is the only setting
+                     under which loop closure has anything to correct.
+       ground_truth  OdometryPublisher reports the simulator's exact pose. Handy
+                     for isolating a sensor or TF problem from a drift problem,
+                     but SLAM then looks perfect for the wrong reason and
+                     slam_toolbox will never fire a loop closure.
+
+       Whichever is unselected still publishes its odometry topic, so the two
+       can be compared to measure how far dead reckoning has wandered. -->
+  <xacro:arg name="odometry_source" default="wheel"/>
+  <xacro:property name="odom_src" value="$(arg odometry_source)"/>
+
+  <!-- ==================================================================== -->
+  <!-- Wheel contact properties                                              -->
+  <!-- ==================================================================== -->
+  <!-- Rubber-on-concrete for the driven wheels; the caster is deliberately
+       slippery so it cannot fight a turn the way a fixed roller would. -->
+  <xacro:macro name="wheel_surface" params="link">
+    <gazebo reference="${link}">
+      <mu1>${wheel_mu}</mu1>
+      <mu2>${wheel_mu}</mu2>
+      <kp>1000000.0</kp>
+      <kd>100.0</kd>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:wheel_surface link="left_wheel_link"/>
+  <xacro:wheel_surface link="right_wheel_link"/>
+
+  <gazebo reference="rear_caster_link">
+    <mu1>${caster_mu}</mu1>
+    <mu2>${caster_mu}</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+  </gazebo>
+
+  <!-- ==================================================================== -->
+  <!-- Core systems                                                          -->
+  <!-- ==================================================================== -->
+  <gazebo>
+    <plugin filename="ignition-gazebo-sensors-system"
+            name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <plugin filename="ignition-gazebo-imu-system"
+            name="ignition::gazebo::systems::Imu"/>
+
+    <!-- Pin the topic. Left to itself this plugin publishes on
+         /world/<world>/model/<model>/joint_state, which bakes the world name
+         into the bridge config and breaks the moment the world changes. -->
+    <plugin filename="ignition-gazebo-joint-state-publisher-system"
+            name="ignition::gazebo::systems::JointStatePublisher">
+      <topic>/tetra/joint_states</topic>
+    </plugin>
+
+    <!-- Differential drive.
+         wheel_separation and wheel_radius come straight from the drive-board
+         parameter table so simulated odometry drifts the same way the real
+         firmware's does. -->
+    <plugin filename="ignition-gazebo-diff-drive-system"
+            name="ignition::gazebo::systems::DiffDrive">
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+      <wheel_separation>${wheel_separation}</wheel_separation>
+      <wheel_radius>${wheel_radius}</wheel_radius>
+      <topic>/tetra/cmd_vel</topic>
+      <odom_topic>/tetra/wheel_odometry</odom_topic>
+      <frame_id>odom</frame_id>
+      <child_frame_id>base_footprint</child_frame_id>
+      <!-- Only the selected source may own /tetra/tf; two publishers of the
+           same transform make TF non-deterministic. -->
+      <xacro:if value="${odom_src == 'wheel'}">
+        <tf_topic>/tetra/tf</tf_topic>
+      </xacro:if>
+      <xacro:unless value="${odom_src == 'wheel'}">
+        <tf_topic>/tetra/wheel_tf_unbridged</tf_topic>
+      </xacro:unless>
+      <max_linear_velocity>${max_linear_velocity}</max_linear_velocity>
+      <min_linear_velocity>${-max_linear_velocity}</min_linear_velocity>
+      <max_angular_velocity>${max_angular_velocity}</max_angular_velocity>
+      <min_angular_velocity>${-max_angular_velocity}</min_angular_velocity>
+      <max_linear_acceleration>${max_linear_accel}</max_linear_acceleration>
+      <min_linear_acceleration>${-max_linear_accel}</min_linear_acceleration>
+      <max_angular_acceleration>${max_angular_accel}</max_angular_acceleration>
+      <min_angular_acceleration>${-max_angular_accel}</min_angular_acceleration>
+    </plugin>
+
+    <!-- Ground-truth pose. Always published on /tetra/odometry as the reference
+         to score dead reckoning against; only owns the TF when selected. -->
+    <plugin filename="ignition-gazebo-odometry-publisher-system"
+            name="ignition::gazebo::systems::OdometryPublisher">
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+      <odom_topic>/tetra/odometry</odom_topic>
+      <xacro:if value="${odom_src == 'ground_truth'}">
+        <tf_topic>/tetra/tf</tf_topic>
+      </xacro:if>
+      <xacro:unless value="${odom_src == 'ground_truth'}">
+        <tf_topic>/tetra/gt_tf_unbridged</tf_topic>
+      </xacro:unless>
+      <dimensions>2</dimensions>
+      <odom_publish_frequency>${gt_publish_rate}</odom_publish_frequency>
+      <gaussian_noise>${gt_noise}</gaussian_noise>
+    </plugin>
+  </gazebo>
+
+  <!-- ==================================================================== -->
+  <!-- Velodyne VLP-16                                                       -->
+  <!-- ==================================================================== -->
+  <!-- 16 beams over +/-15 deg, 0.4-100 m, matching the VLP-16 datasheet.
+       900 horizontal samples is 0.4 deg azimuth: finer than this costs frame
+       rate without helping a 2D occupancy map. -->
+  <gazebo reference="velodyne_link">
+    <sensor name="velodyne_vlp16" type="gpu_lidar">
+      <!-- A gpu_lidar publishes two topics off this base name:
+             <topic>          ignition.msgs.LaserScan
+             <topic>/points   ignition.msgs.PointCloudPacked
+           The bridge wants the second one. Naming this "/tetra/velodyne_points"
+           would make the cloud land on "/tetra/velodyne_points/points", which
+           reads like a mistake and invites bridging the LaserScan by accident. -->
+      <topic>/tetra/velodyne</topic>
+      <update_rate>$(arg lidar_update_rate)</update_rate>
+      <ignition_frame_id>velodyne_link</ignition_frame_id>
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>${lidar_h_samples}</samples>
+            <resolution>1</resolution>
+            <min_angle>${-pi}</min_angle>
+            <max_angle>${pi}</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>${lidar_v_samples}</samples>
+            <resolution>1</resolution>
+            <min_angle>${-lidar_v_angle * pi / 180.0}</min_angle>
+            <max_angle>${ lidar_v_angle * pi / 180.0}</max_angle>
+          </vertical>
+        </scan>
+        <range>
+          <min>${lidar_range_min}</min>
+          <max>${lidar_range_max}</max>
+          <resolution>0.003</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>${lidar_noise_std}</stddev>
+        </noise>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+  <!-- ==================================================================== -->
+  <!-- IMU                                                                   -->
+  <!-- ==================================================================== -->
+  <gazebo reference="imu_link">
+    <sensor name="tetra_imu" type="imu">
+      <topic>/tetra/imu</topic>
+      <update_rate>${imu_update_rate}</update_rate>
+      <ignition_frame_id>imu_link</ignition_frame_id>
+      <always_on>true</always_on>
+      <!-- Gazebo's IMU is noise-free by default, which would make the EKF look
+           far better here than the real iAHRS ever will. These are ordinary
+           MEMS gyro figures: ~0.002 rad/s of white noise on the yaw rate plus a
+           small constant bias, so integrated heading drifts slowly the way real
+           hardware does. Without the bias term the fusion result is fiction. -->
+      <imu>
+        <angular_velocity>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_gyro_std}</stddev>
+              <bias_mean>${imu_gyro_bias}</bias_mean>
+              <bias_stddev>${imu_gyro_bias_std}</bias_stddev>
+            </noise>
+          </z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>${imu_accel_std}</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>${imu_accel_std}</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>${imu_accel_std}</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+</robot>

@@ -1,0 +1,93 @@
+# slam_toolbox tuned for a 3.00 x 2.40 m room.
+#
+# The stock defaults assume a building-scale environment. Left alone in a room
+# this size, slam_toolbox adds a keyframe roughly once per room-length of travel
+# and looks for loop closures over an 8 m window - so it would build a graph of
+# three or four nodes and never close anything. Every value marked "small room"
+# below is scaled to the space.
+#
+# ======================================================================
+#  조정 파라미터 색인 (YAML 구조 고정이라 위로 못 옮깁니다)
+#
+#    resolution                      0.02   맵 셀 크기(m). 방 크기에 맞춘 값
+#    max_laser_range                        스캔 반영 최대 거리
+#    minimum_travel_distance/heading        키프레임을 얼마나 자주 추가할지
+#    loop_search_maximum_distance           loop closure 를 찾는 반경
+#    mode                            mapping / localization
+#
+#  "small room" 이라고 표시된 값은 전부 3.0 x 2.4 m 에 맞춰 축소한 것입니다.
+#  더 큰 공간으로 옮기면 그 값들을 같이 키워야 합니다.
+# ======================================================================
+slam_toolbox:
+  ros__parameters:
+
+    # Plugin params
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    # ROS Parameters
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_footprint
+    scan_topic: /scan
+    use_map_saver: true
+    mode: mapping
+
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.02
+    map_update_interval: 1.0          # small room: 5.0 s feels laggy at this scale
+    resolution: 0.02                  # small room: 2 cm cells -> 150 x 120 grid
+    min_laser_range: 0.45             # must match the VLP-16 blind radius
+    max_laser_range: 8.0              # small room: 30 m was pointless here
+    minimum_time_interval: 0.10
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.
+    stack_size_to_use: 40000000
+    enable_interactive_mode: true
+
+    # General Parameters
+    use_scan_matching: true
+    use_scan_barycenter: true
+    # small room: a lap of the pillar is only ~5 m, so 0.15 m keyframes would
+    # give ~35 nodes per lap. 0.05 m / 0.1 rad keeps the graph dense enough that
+    # loop_match_minimum_chain_size is reachable.
+    minimum_travel_distance: 0.05
+    minimum_travel_heading: 0.10
+    scan_buffer_size: 30
+    scan_buffer_maximum_scan_distance: 6.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.0   # small room: was 1.5
+    loop_search_maximum_distance: 2.0 # small room: was 3.0
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 6  # small room: was 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # Correlation Parameters - Correlation Parameters
+    correlation_search_space_dimension: 0.3   # small room: was 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.03
+
+    # Correlation Parameters - Loop Closure Parameters
+    loop_search_space_dimension: 3.0          # small room: was 8.0
+    loop_search_space_resolution: 0.02
+    loop_search_space_smear_deviation: 0.02
+
+    # Scan Matcher Parameters
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true
+    min_pass_through: 2
+    occupancy_threshold: 0.1

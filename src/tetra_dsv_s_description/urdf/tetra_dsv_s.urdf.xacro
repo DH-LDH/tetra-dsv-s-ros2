@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<!--
+  TETRA-DSV-S AMR with a mast-mounted Velodyne VLP-16.
+
+  AMR only. There is no manipulator on this platform and none is modelled here,
+  so there is nothing to comment out or strip before running SLAM.
+
+  Usage:
+    xacro tetra_dsv_s.urdf.xacro                  # real robot / RViz
+    xacro tetra_dsv_s.urdf.xacro use_gazebo:=true # + Fortress plugins & sensors
+-->
+<robot name="tetra_dsv_s" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:arg name="use_gazebo" default="false"/>
+  <!-- Passed through to the Gazebo systems; see tetra_dsv_s.gazebo.xacro. -->
+  <xacro:arg name="odometry_source" default="wheel"/>
+
+  <xacro:include filename="$(find tetra_dsv_s_description)/urdf/common.xacro"/>
+  <xacro:include filename="$(find tetra_dsv_s_description)/urdf/tetra_dsv_s_base.xacro"/>
+  <xacro:include filename="$(find tetra_dsv_s_description)/urdf/sensor_mast.xacro"/>
+
+  <xacro:if value="$(arg use_gazebo)">
+    <xacro:include filename="$(find tetra_dsv_s_description)/urdf/tetra_dsv_s.gazebo.xacro"/>
+  </xacro:if>
+
+</robot>

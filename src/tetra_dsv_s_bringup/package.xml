@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>tetra_dsv_s_bringup</name>
+  <version>0.1.0</version>
+  <description>
+    Real-robot bringup for the TETRA-DSV-S: RS-232 drive-board driver plus the
+    sensor and localisation stack that runs on the Jetson. Mirrors
+    scout_bringup, with CAN + ugv_sdk replaced by the vendor's RS-232 protocol.
+  </description>
+  <maintainer email="ekgks3451@gmail.com">da</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <exec_depend>tetra_dsv_s_description</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
+  <exec_depend>pointcloud_to_laserscan</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <!-- velodyne_driver / velodyne_pointcloud / iahrs_driver_ros2 are needed on
+       the Jetson but are not declared here: the first two come from apt on the
+       target only, and iahrs has to be cloned separately (HANDOFF section 8). -->
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,36 @@
+/**:
+  ros__parameters:
+    # Slice in base_footprint, i.e. metres above the floor. This is easier to
+    # reason about than velodyne_link, where every number is relative to a
+    # sensor sitting 1.05 m up.
+    target_frame: base_footprint
+    transform_tolerance: 0.05
+
+    # Keep returns from 0.30 m up to 1.60 m above the floor.
+    #
+    # Lower bound clears the floor. The VLP-16's lowest beam is 15 deg down from
+    # 1.05 m, so it reaches the floor at 1.05/tan(15) = 3.9 m - further than the
+    # 3.8 m diagonal of this room, so no floor strikes happen here anyway. The
+    # bound is kept for when the robot moves to a larger space.
+    #
+    # Upper bound sits under the 2.0 m walls so ceiling clutter never enters.
+    min_height: 0.30
+    max_height: 1.60
+
+    angle_min: -3.14159265
+    angle_max: 3.14159265
+    # 0.5 deg. Finer than the sensor's 0.4 deg azimuth buys nothing.
+    angle_increment: 0.00872665
+    scan_time: 0.1
+
+    # Must not go below the VLP-16's 0.4 m minimum return distance, or the scan
+    # advertises coverage it does not have and SLAM treats the blind zone as
+    # free space.
+    range_min: 0.45
+    # Room diagonal is 3.84 m; 8 m leaves headroom without wasting rays.
+    range_max: 8.0
+
+    use_inf: true
+    inf_epsilon: 1.0
+    # 0 = use all available cores.
+    concurrency_level: 0
