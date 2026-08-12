@@ -49,6 +49,7 @@ cd ~/tetra_ws/tetra-dsv-s-ros2
 |---|---|
 | `docker` permission denied | 세션이 `docker` 그룹 추가 이전에 시작됨. `run.sh`가 `sg docker -c`로 자동 우회. 로그아웃/로그인하면 깔끔해짐 |
 | `nvidia.github.io` 타임아웃 | **이 네트워크는 GitHub Pages(185.199.x.x) 대역이 차단됨.** `github.com` / `raw.githubusercontent.com`은 정상. GitHub Pages 기반 apt 저장소는 `raw.githubusercontent.com/<org>/<repo>/gh-pages/...`로 우회 |
+| `gh` 설치가 `cli.github.com`에서 멈춤 | 같은 차단의 다른 얼굴. **공식 안내대로 `cli.github.com/packages` apt 저장소를 추가하지 말 것.** 우분투 자체 저장소에 gh 2.45.0이 있음 → `sudo apt install gh` 로 끝 |
 | Gazebo가 느림 | `--gpus all`만으로는 OpenGL이 llvmpipe로 폴백. **`NVIDIA_DRIVER_CAPABILITIES=graphics,...` 필수.** `run.sh`에 반영됨. 확인: `./docker/run.sh 'glxinfo -B \| grep "OpenGL renderer"'` → NVIDIA 나와야 정상 |
 
 ---
