@@ -13,3 +13,6 @@ __pycache__/
 *~
 .vscode/
 compile_commands.json
+
+# 신선한 클론이 빌드되는지 검증할 때 쓰는 임시 디렉토리
+.fresh/
