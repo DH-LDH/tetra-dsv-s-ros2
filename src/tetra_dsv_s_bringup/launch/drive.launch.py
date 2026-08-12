@@ -3,6 +3,11 @@
 센서(VLP-16, iAHRS)나 Nav2 는 여기 없습니다. 그것들은 젯슨에 드라이버가 설치된
 뒤 bringup.launch.py 로 갑니다. 처음부터 전부 띄우면 뭐가 안 되는지 못 가립니다.
 
+odom -> base_footprint 도 아직 아무도 발행하지 않습니다. 그 변환은 EKF 가
+소유하고(시뮬과 동일), EKF 는 IMU 가 붙은 뒤에 들어옵니다. 그러니 이 단계에서
+RViz 를 열면 로봇이 제자리에 서 있는 게 정상입니다 — 바퀴 관절만 움직입니다.
+확인할 것은 /wheel_odometry 의 값이지 RViz 속 위치가 아닙니다.
+
     # 1. ROS 없이 시리얼부터 (권장)
     ros2 run tetra_dsv_s_bringup probe_drive_board.py --port /dev/ttyUSB0
 
@@ -19,7 +24,6 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
 from launch.substitutions import Command, FindExecutable, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -86,17 +90,6 @@ def generate_launch_description():
         output="screen",
     )
 
-    # 실기 첫 확인용. odom -> base_footprint 를 임시로 드라이버 오도메트리에서
-    # 직접 만들어 RViz 에 로봇이 움직이는 걸 보이게 합니다.
-    # EKF 를 붙이는 순간 이건 꺼야 합니다 — TF 부모가 둘이 되면 안 됩니다.
-    odom_tf = Node(
-        package="tf2_ros",
-        executable="tf2_echo",
-        arguments=["odom", "base_footprint"],
-        condition=IfCondition(LaunchConfiguration("check_tf")),
-        output="screen",
-    )
-
     return LaunchDescription([
         DeclareLaunchArgument("port", default_value=DEFAULT_PORT),
         DeclareLaunchArgument("rate_hz", default_value=str(DEFAULT_RATE_HZ)),
@@ -110,9 +103,6 @@ def generate_launch_description():
                               default_value=str(DEFAULT_MAX_ANGULAR)),
         DeclareLaunchArgument("cmd_vel_timeout",
                               default_value=str(DEFAULT_CMD_TIMEOUT)),
-        DeclareLaunchArgument("check_tf", default_value="false",
-                              choices=["true", "false"]),
         robot_state_publisher,
         drive,
-        odom_tf,
     ])
