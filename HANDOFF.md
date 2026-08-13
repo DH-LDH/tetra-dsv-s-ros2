@@ -13,6 +13,8 @@
 > — **휠 트랙 실측 완료 (377mm), URDF·launch 기본값 모두 반영** (§2-(1))
 > — `probe_drive_board.py`의 `read_reply()` 프레임 종료 판정 버그 수정
 >   (페이로드 안 0x03 값을 ETX로 오판해 BV 응답이 조기 절단되던 문제)
+> — **실기 바퀴 회전 시험 성공 (raw 프로토콜 레벨).** 펌웨어 자체 통신두절
+>   안전장치(Para30, 2000ms) 확인. ROS 노드 자체 실기 구동은 아직 (§8-B)
 
 ---
 
@@ -527,15 +529,34 @@ LRC   STX 다음부터 ETX 까지의 단순 XOR (체크섬/CRC 아님)
 - 부팅 시 보드는 **위치모드**입니다. `CZ11`(속도모드)을 먼저 안 보내면 BV가
   받아들여지고도 **아무것도 안 움직입니다.** 무증상 함정.
 - cmd_vel 워치독 0.5초. 끊기면 정지. 실기에서 이 값을 키우지 말 것.
+- **펌웨어 자체에도 통신두절 안전장치가 있습니다.** 매뉴얼 §4-4-1 Para30 —
+  상위제어기 무응답 시 좌우모터 강제정지, 기본 **2000ms**. 우리 노드의 0.5초
+  워치독 위에 얹힌 하드웨어 레벨 이중 안전망. 노드가 죽어도 최악 2초 내 정지.
 
-**검증된 것 / 안 된 것**
-- `-Wall -Wextra -Wpedantic` 컴파일 통과, 포트 없을 때 FATAL 후 정상 종료 확인
-- **실기 통신 미검증.** 개발 PC는 x86이고 시리얼 장치가 없습니다. 응답 프레임
-  해석(특히 `theta_raw`의 0.1도 스케일)은 소스에서 읽은 것이지 실측이 아닙니다.
+**✅ 실기 통신 검증 완료 (2026-08-12, 젯슨)**
+- `probe_drive_board.py`로 CN20 구동보드 통신 확인, 줄자로 휠 트랙 377mm 확정
+  (§2-(1) 참고, 매뉴얼 Para5 438mm는 펌웨어 내부 오도메트리 전용으로 폐기)
+- **바퀴 회전 시험 성공.** ROS 노드가 아니라 이 raw 프로토콜 레벨에서 확인.
+- 과정에서 `probe_drive_board.py`의 프레임 종료 판정 버그를 발견해 수정
+  (`0x03` 값이 페이로드 안에도 등장해 조기 절단되던 문제 — 커밋 3533ba5)
+- **아직 검증 안 됨**: `tetra_drive_node`(ROS 2 노드) 자체는 아직 실기로 안
+  띄워봄. probe 스크립트는 raw 프로토콜만 확인했고, ROS 레이어(odom 발행,
+  joint_states, cmd_vel 구독)는 다음 단계.
 
-**다음**: 젯슨에서 `probe_drive_board.py`부터. 통신이 되면 launch로.
+**다음**: `ros2 launch tetra_dsv_s_bringup drive.launch.py`로 ROS 노드 자체를
+실기에서 띄워 `/wheel_odometry` 발행 확인. 그 다음 teleop으로 실제 주행.
 센서(VLP-16 / iAHRS)와 Nav2 wiring은 젯슨에 드라이버가 설치된 뒤 작성합니다 —
 없는 패키지의 노드·토픽 이름을 추측해서 launch를 쓰면 안 되기 때문.
+
+**매뉴얼 6~10장 관련 — 참고하지 말 것**
+Chapter 6(Software Setup)부터 10(TETRA APP)까지는 TETRA-DSV-S가 아니라
+**TETRA-DS V**(도킹스테이션·컨베이어 달린 별도 완제품)의 벤더 레퍼런스
+구현입니다. ROS 1 Melodic + Cartographer + move_base/TEB + SICK TIM571/
+CygLiDAR D1 + RealSense D435 ×2 조합이라 우리 스택(ROS 2 Humble +
+slam_toolbox + Nav2 + VLP-16)과 세 겹으로 다릅니다. §9의 `goto_cmd` 등
+ROS 서비스는 벤더 ROS1 패키지(`tetraDS_2dnav`/`tetraDS_service`, 로컬
+사본 `~/tetra_ws/TETRA-DSV-S`에 있음)가 제공하는 거라 우리 ROS2 코드에
+이식 불가. **Chapter 4(프로토콜)까지만 유효한 레퍼런스.**
 
 ### 원래 계획 (참고)
 
