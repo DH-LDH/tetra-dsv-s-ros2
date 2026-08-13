@@ -210,13 +210,37 @@
   </joint>
 
   <!-- ==================================================================== -->
-  <!-- On-board IMU (iAHRS). Pose from [URDF] base_link_to_imu_link.          -->
+  <!-- On-board IMU. Pose from [URDF] base_link_to_imu_link.                 -->
+  <!--                                                                       -->
+  <!-- The part is a LORD MicroStrain 3DM-GV7-AHRS, not the iAHRS this file  -->
+  <!-- used to name (confirmed 2026-08-13 on the real robot: /dev/ttyACM0    -->
+  <!-- enumerates as Lord_Inertial_Sensor, model 3DMGV7-AHRS, S/N            -->
+  <!-- 6288.171025). See tetra_dsv_s_bringup/config/imu_gv7.yml.             -->
+  <!--                                                                       -->
+  <!-- MOUNTING: on the real robot the unit is installed UPSIDE DOWN. At     -->
+  <!-- rest it reads az = -9.83 m/s^2 (gravity along -Z), and driving the    -->
+  <!-- robot showed its yaw rate opposing the wheel odometry on 611 of 616   -->
+  <!-- samples over 159 deg of rotation - so the Z axis is definitely        -->
+  <!-- inverted. Whether the flip is about X or about Y was NOT determined:  -->
+  <!-- both invert Z identically, and separating them needs a clean          -->
+  <!-- longitudinal-acceleration measurement we did not get (see             -->
+  <!-- scripts/check_imu_mounting.py). It does not matter for planar SLAM -  -->
+  <!-- both give the same yaw-rate correction - so roll(180) is used here    -->
+  <!-- and the EKF is configured to take only the yaw RATE from this sensor  -->
+  <!-- (config/ekf.yaml), never its absolute heading, which is the one       -->
+  <!-- quantity the X/Y ambiguity would flip.                                -->
+  <!--                                                                       -->
+  <!-- Gazebo's IMU is an idealised part mounted the normal way up, so the   -->
+  <!-- flip is applied only when this file is expanded for the real robot.   -->
+  <!-- Keeping it out of the sim leaves the two TF trees the same shape.     -->
+  <xacro:property name="imu_mount_rpy"
+                  value="${'0 0 0' if '$(arg use_gazebo)' == 'true' else '3.14159265 0 0'}"/>
   <!-- ==================================================================== -->
   <link name="imu_link"/>
   <joint name="imu_joint" type="fixed">
     <parent link="base_link"/>
     <child  link="imu_link"/>
-    <origin xyz="0 0 0.232" rpy="0 0 0"/>
+    <origin xyz="0 0 0.232" rpy="${imu_mount_rpy}"/>
   </joint>
 
 </robot>

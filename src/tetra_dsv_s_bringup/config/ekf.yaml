@@ -1,0 +1,67 @@
+# robot_localization EKF — 실기용. odom -> base_footprint 를 이 노드가 소유합니다.
+#
+# 왜 드라이브 노드가 아니라 여기서 내는가: 시뮬도 같은 구조이기 때문입니다.
+# 드라이브 노드가 직접 TF 를 내면 부모가 둘이 되어 TF 트리가 깨집니다
+# (tetra_drive_node.cpp 주석 참고).
+#
+# 입력 두 가지:
+#   odom0 = /wheel_odometry   — 휠 엔코더. vx, wz 만 씁니다.
+#   imu0  = /imu/data         — MicroStrain 3DM-GV7. **yaw rate 만** 씁니다.
+#
+# IMU 에서 절대 방위(yaw)를 안 받는 이유가 중요합니다. 이 IMU 는 실기에
+# 거꾸로 달려 있는데(URDF tetra_dsv_s_base.xacro 의 imu_mount_rpy 참고),
+# X축으로 뒤집힌 것인지 Y축으로 뒤집힌 것인지를 실측으로 가르지 못했습니다.
+# 두 경우는 yaw **rate** 에 대해서는 완전히 같은 보정이지만, 절대 방위에
+# 대해서는 180도 어긋납니다. 그래서 모호성이 영향을 못 주는 rate 만 받습니다.
+# 절대 방위가 필요해지면(예: 지자기 기준 초기화) 그때 X/Y 를 확정해야 합니다.
+
+ekf_filter_node:
+  ros__parameters:
+
+    frequency: 30.0                  # 휠 오도메트리와 같은 주기
+    sensor_timeout: 0.2
+    two_d_mode: true                 # 평면 주행. z/roll/pitch 를 0 으로 묶습니다
+    publish_tf: true
+    print_diagnostics: true
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_footprint  # 시뮬과 동일하게 footprint 를 씁니다
+    world_frame: odom                # map 은 SLAM 이 소유합니다
+
+    # ---------------- 휠 오도메트리 ----------------
+    odom0: /wheel_odometry
+    # 순서: x  y  z   roll pitch yaw   vx vy vz   vroll vpitch vyaw   ax ay az
+    # 위치는 안 받고 속도만 받습니다. 펌웨어 적분 위치는 미끄러짐이 누적되므로
+    # EKF 가 자체 적분하게 두는 편이 낫습니다.
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  false, false,
+                   false, false, true,
+                   false, false, false]
+    odom0_queue_size: 10
+    odom0_differential: false
+    odom0_relative: false
+
+    # ---------------- IMU ----------------
+    imu0: /imu/data
+    # yaw rate(vyaw) 하나만 true. 위 주석의 이유로 절대 yaw 는 받지 않습니다.
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_queue_size: 20
+    imu0_differential: false
+    imu0_relative: false
+    # URDF 의 imu_joint 회전(실기에서 roll 180도)으로 좌표 변환을 맡깁니다.
+    imu0_remove_gravitational_acceleration: true
+
+    # ---------------- 공분산 ----------------
+    # process_noise_covariance 를 직접 쓰지 않습니다. robot_localization 의
+    # 상태 벡터는 15차원(x y z, roll pitch yaw, vx vy vz, vroll vpitch vyaw,
+    # ax ay az)이라 이 행렬은 반드시 15x15 = 225개여야 합니다. 처음에 6x6
+    # 36개만 넣었다가 필터가 즉시 NaN 을 뱉었습니다 (2026-08-13).
+    # 기본값이 이미 일반적인 지상 주행 로봇에 맞게 잡혀 있고, 실측 없이
+    # 손으로 고치면 오히려 나빠지므로 그대로 둡니다. 튜닝이 필요해지면
+    # 225개를 다 적어야 합니다.

@@ -1,0 +1,36 @@
+# LORD MicroStrain 3DM-GV7-AHRS — 실기 장착 IMU 설정.
+#
+# HANDOFF 초안에는 iAHRS 로 적혀 있었지만, 2026-08-13 젯슨에 USB 허브를 옮겨
+# 붙이고 확인해 보니 실제 장착품은 MicroStrain 3DM-GV7-AHRS 였습니다.
+#     /dev/ttyACM0  Lord_Microstrain / Lord_Inertial_Sensor
+#     Model 3DMGV7-AHRS, S/N 6288.171025, FW 1.1.00
+# 드라이버도 iAHRS 계열이 아니라 ros-humble-microstrain-inertial-driver 를 씁니다.
+#
+# 이 파일은 드라이버 기본 params.yml 위에 덮어쓰는 값만 담습니다:
+#     ros2 launch microstrain_inertial_driver microstrain_launch.py \
+#         params_file:=<이 파일>
+
+microstrain_inertial_driver:
+  ros__parameters:
+
+    port: "/dev/ttyACM0"
+    baudrate: 115200
+
+    # GV7 은 AHRS 입니다 - GNSS 도 PPS 입력도 없습니다. 기본값 1(Receiver 1)로
+    # 두면 드라이버가 부팅 중 PPS 소스 설정을 시도하다가 "Error(3): Invalid
+    # Parameter" 로 죽습니다. 장치 결함이 아니라 없는 기능을 켜려던 것입니다.
+    filter_pps_source: 0
+
+    # 같은 이유로 자기편각(declination)도 끕니다. 기본값 2(자기 모델)는 위치를
+    # 알아야 편각을 계산할 수 있어서 GNSS 가 있는 모델 전용입니다. 드라이버
+    # params.yml 주석에도 "CV7 을 쓸 때는 1 이나 3 으로 바꿔야 노드가 시작된다"
+    # 고 적혀 있고, GV7 도 같은 7-시리즈라 동일하게 걸립니다.
+    #     1 = None / 2 = magnetic model / 3 = manual
+    filter_declination_source: 1
+
+    # URDF 의 imu_link 와 일치시켜야 EKF/TF 가 맞습니다 (드라이버 기본값과
+    # 우연히 같지만, 바뀌면 조용히 어긋나므로 여기 명시해 둡니다).
+    frame_id: "imu_link"
+
+    # ROS 관례(ENU). 시뮬 쪽 EKF 설정과 같은 규약을 씁니다.
+    use_enu_frame: True

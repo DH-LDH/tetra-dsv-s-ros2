@@ -1,7 +1,9 @@
 """구동부만 띄웁니다 — 실기 첫 통전 때 쓰는 최소 구성.
 
-센서(VLP-16, iAHRS)나 Nav2 는 여기 없습니다. 그것들은 젯슨에 드라이버가 설치된
-뒤 bringup.launch.py 로 갑니다. 처음부터 전부 띄우면 뭐가 안 되는지 못 가립니다.
+센서(VLP-16, IMU)나 SLAM 은 여기 없습니다. 처음부터 전부 띄우면 뭐가 안 되는지
+못 가리기 때문입니다. 전부 필요하면 slam.launch.py 를 쓰세요 — 구동부 + 라이다
++ IMU + EKF + slam_toolbox 를 한 번에 띄웁니다.
+(IMU 는 MicroStrain 3DM-GV7-AHRS 입니다. 예전 문서의 iAHRS 는 오기였습니다.)
 
 odom -> base_footprint 도 아직 아무도 발행하지 않습니다. 그 변환은 EKF 가
 소유하고(시뮬과 동일), EKF 는 IMU 가 붙은 뒤에 들어옵니다. 그러니 이 단계에서

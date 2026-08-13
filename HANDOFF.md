@@ -5,14 +5,17 @@
 > 검증된 수치 / 결정과 그 근거 / 무증상 함정을 밀도 있게 유지할 것.
 > 작업을 끝낼 때 이 파일 갱신까지가 그 작업의 일부입니다. 틀린 내용을 발견하면
 > 반드시 고칠 것 — 여기 남은 오류는 다음 세션을 그대로 오도합니다.
-> 마지막 갱신: 2026-08-12
-> — 문서를 실제 파일과 대조 검증 (§7 launch 인자, §8 iahrs/라이다 정정)
-> — **맵 2개 작성·저장 + AMCL 운영 모드 검증 완료** (§4)
-> — **local costmap clearing 결함 발견 후 수정 완료** (§8 맨 앞)
-> — 실기 테스트 공간 정보 확보, 동적 장애물은 실기 이후로 (§8-C)
-> — **휠 트랙 실측 완료 (377mm), URDF·launch 기본값 모두 반영** (§2-(1))
-> — `probe_drive_board.py`의 `read_reply()` 프레임 종료 판정 버그 수정
->   (페이로드 안 0x03 값을 ETX로 오판해 BV 응답이 조기 절단되던 문제)
+> 마지막 갱신: 2026-08-13
+> — **실기에서 SLAM 가동 성공. 지금까지 전부 시뮬이었던 것이 실기로 넘어감** (§10)
+> — **IMU 는 iAHRS 가 아니라 MicroStrain 3DM-GV7-AHRS 였음.** 문서 전반의
+>   "iAHRS" 기술은 전부 틀린 것이었습니다 (§10-2)
+> — 라이다·IMU·구동부 실기 연결 완료, `slam.launch.py` 신규 (§10-5)
+> — **사내 게스트 와이파이가 UDP 멀티캐스트를 막아 ROS 2 원격이 전면 불통.**
+>   Fast DDS Discovery Server 로 우회 (§10-1) — 매번 겪을 문제라 꼭 읽을 것
+> — FTDI `latency_timer` 기본 16ms 때문에 BV 응답이 잘려 들어오던 문제 (§10-3)
+> — 2026-08-12 기록: 맵 2개 작성·저장 + AMCL 검증 (§4), local costmap
+>   clearing 수정 (§8), 휠 트랙 실측 377mm (§2-(1)),
+>   `probe_drive_board.py` 프레임 종료 판정 버그 수정
 
 ---
 
@@ -289,8 +292,10 @@ slam resolution   0.02
    drift가 0이라 교정할 게 없음 → `map→odom` 고정 → loop closure 미발화.
 
 6. **Gazebo IMU는 기본이 무노이즈**
-   그대로 쓰면 EKF 결과가 실제 iAHRS보다 과도하게 좋게 나와 실기 오차를 숨김.
+   그대로 쓰면 EKF 결과가 실기 IMU보다 과도하게 좋게 나와 실기 오차를 숨김.
    현재 gyro yaw에 stddev 0.002 + bias 추가해 둠.
+   (실기 IMU는 MicroStrain 3DM-GV7-AHRS입니다 — §10-2. 이 노이즈 수치는
+   일반 MEMS 기준으로 넣은 것이고 GV7 데이터시트와 대조하진 않았습니다.)
 
 7. **teleop이 1초마다 끊긴다**
    ROS 2 `teleop_twist_keyboard`에는 `repeat_rate`가 **없음**(ROS 1엔 있었음).
@@ -533,9 +538,9 @@ LRC   STX 다음부터 ETX 까지의 단순 XOR (체크섬/CRC 아님)
 - **실기 통신 미검증.** 개발 PC는 x86이고 시리얼 장치가 없습니다. 응답 프레임
   해석(특히 `theta_raw`의 0.1도 스케일)은 소스에서 읽은 것이지 실측이 아닙니다.
 
-**다음**: 젯슨에서 `probe_drive_board.py`부터. 통신이 되면 launch로.
-센서(VLP-16 / iAHRS)와 Nav2 wiring은 젯슨에 드라이버가 설치된 뒤 작성합니다 —
-없는 패키지의 노드·토픽 이름을 추측해서 launch를 쓰면 안 되기 때문.
+**다음**: ~~젯슨에서 `probe_drive_board.py`부터~~ → **2026-08-13 완료.**
+구동부·VLP-16·IMU·EKF·SLAM 전부 실기에서 가동했습니다. §10 참고.
+(아래 "원래 계획"은 착수 전 기록이라 IMU 기종 등이 틀립니다. §10이 실제입니다.)
 
 ### 원래 계획 (참고)
 
@@ -544,9 +549,12 @@ LRC   STX 다음부터 ETX 까지의 단순 XOR (체크섬/CRC 아님)
 젯슨에서 돌아야 하는 것:
 ```
 시리얼 드라이버 ×2 (구동보드 CN20, 전원센서보드 CN24, 각 115200)
-iahrs_driver_ros2                  ← 별도 clone 필요! (아래 주의 참고)
+iahrs_driver_ros2                  ← ❌ 틀림. 실물은 MicroStrain 이고
+                                      ros-humble-microstrain-inertial-driver
+                                      를 apt 로 설치합니다 (§10-2)
 velodyne_driver + velodyne_pointcloud
-pointcloud_to_laserscan
+pointcloud_to_laserscan            ← 불필요. velodyne_laserscan 이 /scan 을
+                                      바로 냅니다 (§10-5)
 robot_state_publisher
 robot_localization EKF
 slam_toolbox (지도작성) 또는 amcl (운영)   ← 둘 중 하나만
@@ -560,10 +568,10 @@ Nav2
 
 **필요 작업**: USB-시리얼 포트 고정용 udev 규칙 (매뉴얼 6-6절에 IMU 예시 있음)
 
-**`iahrs_driver_ros2` 주의**: 로컬 사본 `~/tetra_ws/TETRA-DSV-S`에는 **없습니다.**
-그 저장소는 TETRA-DSV-S 하나뿐이고 IMU 드라이버는 Hyulim-Group 조직의 **별도
-저장소**입니다. 따로 clone 해야 합니다. `github.com` 자체는 이 네트워크에서
-정상이므로(차단은 GitHub Pages 대역뿐, §1 참고) 받는 데는 문제 없습니다.
+**~~`iahrs_driver_ros2` 주의~~ — 이 항목 전체가 무효입니다 (2026-08-13).**
+실기에 달린 IMU는 iAHRS가 아니라 **LORD MicroStrain 3DM-GV7-AHRS** 였습니다.
+clone 할 것 없이 `sudo apt install ros-humble-microstrain-inertial-driver`
+로 끝납니다. 자세한 건 §10-2 (GV7 전용 파라미터 함정 두 개 포함).
 
 **벤더 라이다는 우리 것과 다름**: 벤더 저장소의 라이다 패키지는 `lslidar_n301`
 (2D 스캐너)입니다. 우리 스택의 VLP-16 + 센서 마스트는 사용자 추가 구성이므로,
@@ -591,3 +599,259 @@ bringup 작성 시 벤더 launch에서 라이다 부분은 참고하지 말고 �
   경고는 763회 → 0회가 됐지만, 이건 "레이트레이싱이 이제 수행된다"까지만
   증명합니다. 장애물이 사라졌을 때 실제로 지워지는지는 **움직이는 장애물이
   있어야 검증 가능**하고, 그건 §8-C에 따라 실기 이후로 미뤄져 있습니다.
+
+---
+
+## 10. 실기 브링업 (2026-08-13) — 젯슨에서 SLAM 가동까지
+
+이 장 이전의 §4 검증 결과는 **전부 시뮬레이션**입니다. 이 장이 실기 첫 기록입니다.
+하루에 걸쳐 구동부 → 라이다 → IMU → EKF → SLAM 순으로 뚫었고, 각 단계에서
+막힌 지점과 원인을 아래에 남깁니다. **대부분 다음에도 똑같이 재발합니다.**
+
+### 10-0. 하드웨어 실물 구성 (문서에 없던 것)
+
+로봇은 다른 기관(공항산업기술연구원) 자산이고, 원래 **인텔 NUC** 이 제어
+컴퓨터였습니다. AMR 내부에서 USB 5 가닥이 차체 위로 올라와 **USB 허브(UH508)**
+에 모이고, 그 허브의 업스트림이 NUC 으로 갑니다. 별도로 **iPTIME H6005mini
+(공유기 아니라 스위치)** 가 있고 여기에 AMR 내부 랜선 / NUC / 라이다(빨간 랜선,
+기둥 위로) 가 물려 있습니다.
+
+우리 젯슨을 붙이는 방법:
+
+| 장치 | 방식 | 비고 |
+|---|---|---|
+| 구동보드 | USB-RS232(FTDI)를 허브에서 **뽑아 젯슨에** | 점대점이라 공유 불가 |
+| IMU·RealSense·웹캠 | **USB 허브 업스트림을 통째로 젯슨에** | 5개를 한 번에 확보 |
+| VLP-16 | 젯슨 이더넷 → **스위치 빈 포트에 추가** | 아무것도 안 뽑아도 됨 |
+
+라이다를 뽑지 않아도 되는 이유: VLP-16 이 `255.255.255.255` 로 브로드캐스트하기
+때문에 스위치에 물린 NUC 과 젯슨이 **동시에 같은 데이터를 받습니다.**
+NUC 쪽 기존 시스템을 건드리지 않고 붙일 수 있는 유일한 경로라 이 방법을 씁니다.
+
+**컴퓨터끼리 USB 로 연결하는 것은 답이 아닙니다** (실제로 검토했다가 기각).
+USB 는 호스트 1 : 장치 N 구조라, 젯슨과 NUC 둘 다 호스트인 이상 서로의 장치를
+볼 수 없습니다. USB-A 끼리 직결은 위험하기까지 합니다.
+
+허브에서 새로 발견된 장치 (문서 어디에도 없던 것):
+- **Intel RealSense D455** 뎁스 카메라 (ROS 패키지는 아직 미설치)
+- USB2.0 UVC 웹캠
+- PL2303 시리얼 어댑터 — 커널 드라이버가 안 올라와 포트가 안 생김. 용도 미상
+
+### 10-1. ⚠ 사내 게스트 와이파이가 ROS 2 원격을 전면 차단 — 매번 겪습니다
+
+**증상.** 노트북에서 `ros2 topic list` 하면 `/parameter_events`, `/rosout`
+둘만 보입니다. 젯슨에서는 모든 토픽이 정상. `ROS_DOMAIN_ID`(25)와
+`ROS_LOCALHOST_ONLY`(0) 를 양쪽 다 맞춰도 그대로입니다.
+
+**진단.** 다음 순서로 30초면 확정됩니다.
+
+```
+ping <젯슨IP>                      # 성공  -> L3 유니캐스트는 살아있음
+ros2 multicast receive   (한쪽)
+ros2 multicast send      (다른쪽)  # 양방향 모두 실패
+```
+
+ping 은 되는데 멀티캐스트만 죽는 것이 결정적 단서입니다. ROS 2 기본 디스커버리
+(SPDP)는 UDP 멀티캐스트를 쓰므로, 이게 막히면 서로를 **영원히** 못 찾습니다.
+
+**원인.** 젯슨이 붙어 있던 SSID 가 `KITECH_Guest` — 게스트망입니다. 기업
+게스트망은 무선 멀티캐스트 폭주 방지 목적으로 멀티캐스트/브로드캐스트를
+선택적으로 드롭하는 것이 일반적입니다. (완전한 client isolation 은 아닙니다 —
+그거였으면 ping 도 막힙니다.)
+
+**우회 — Fast DDS Discovery Server.** 멀티캐스트 없이 유니캐스트로만
+디스커버리합니다. 추가 설치 없이 Humble 에 이미 들어 있습니다.
+
+```
+# 젯슨: 서버 (계속 떠 있어야 함)
+fast-discovery-server --server-id 0 --udp-port 11811
+
+# 양쪽 공통 환경변수
+export ROS_DISCOVERY_SERVER="10.101.111.244:11811"
+export FASTRTPS_DEFAULT_PROFILES_FILE=~/tetra_dds/super_client.xml
+```
+
+`super_client.xml` 은 `<discoveryProtocol>SUPER_CLIENT</discoveryProtocol>` 과
+서버 주소를 담습니다. 서버 GUID prefix 는 server-id 0 일 때
+`44.53.00.5f.45.50.52.4f.53.49.4d.41` 로 고정입니다.
+
+**무증상 함정 두 개 — 둘 다 실제로 당했습니다:**
+
+1. **SUPER_CLIENT 프로파일 없이 환경변수만 설정하면** 노드끼리는 통신하지만
+   `ros2 topic list` 같은 CLI 는 여전히 아무것도 못 봅니다. CLI 는 자기가
+   구독하지 않는 토픽을 서버에 물어봐야 하는데, 평범한 CLIENT 는 그 권한이
+   없습니다.
+2. **`ros2 daemon stop` 을 안 하면 아무 설정도 반영되지 않습니다.** 데몬이
+   이전 디스커버리 설정을 캐시한 채 살아 있습니다. 환경변수를 바꿨으면
+   **반드시** 데몬을 죽이고 다시 조회해야 합니다. 이것 때문에 "설정이 틀렸나"
+   하고 한참 헤맸습니다.
+
+**근본 해결.** 정규 사내망이나 별도 공유기로 옮기면 Discovery Server 없이
+그냥 됩니다. 게스트망에 계속 있어야 한다면 위 구성을 유지하세요.
+
+### 10-2. ⚠ IMU 는 iAHRS 가 아니라 MicroStrain 3DM-GV7-AHRS 였습니다
+
+문서 전반(§2, §8, URDF 주석)이 "iAHRS" 라고 적고 있었지만 **실물이 다릅니다.**
+
+```
+/dev/ttyACM0   ID_VENDOR=Lord_Microstrain  ID_MODEL=Lord_Inertial_Sensor
+Model Name: 3DMGV7-AHRS   S/N 6288.171025   FW 1.1.00
+```
+
+드라이버도 다릅니다: `ros-humble-microstrain-inertial-driver` (apt 설치).
+
+**GV7 전용 함정 두 개 — 둘 다 노드가 그냥 죽습니다:**
+
+| 파라미터 | 기본값 | 필요값 | 안 바꾸면 |
+|---|---|---|---|
+| `filter_pps_source` | 1 | **0** | `Failed to configure PPS source / Error(3)` 후 FATAL |
+| `filter_declination_source` | 2 | **1** | `Failed to set declination source / Error(3)` 후 FATAL |
+
+GV7 은 GNSS 가 없는 AHRS 라 PPS 입력도 자기편각 계산도 지원하지 않습니다.
+드라이버 기본값은 GNSS 달린 상위 모델 기준입니다. 참고로 드라이버 자신의
+`params.yml` 주석에도 "CV7 을 쓸 때는 declination 을 1 이나 3 으로 바꿔야
+노드가 시작된다"고 적혀 있고, GV7 도 같은 7-시리즈라 동일하게 걸립니다.
+
+설정은 `tetra_dsv_s_bringup/config/imu_gv7.yml`. 남는 에러
+`Failed to set baudrate for port 0X13` 는 **무해합니다** — USB CDC 라 실제
+보레이트 개념이 없어서 나는 것이고, 그 뒤에 `Node activated` 가 뜹니다.
+
+**장착 방향 — 거꾸로 달려 있습니다.** 정지 상태에서 `az = -9.83 m/s^2`.
+로봇을 159도 회전시켜 보니 IMU 의 yaw rate 가 휠 오도메트리와 **616 표본 중
+611 개(99%)에서 부호 반대** — Z 축 반전이 확정입니다.
+
+다만 **X 축으로 뒤집힌 것인지 Y 축으로 뒤집힌 것인지는 끝내 못 갈랐습니다.**
+두 경우 모두 Z 를 똑같이 반전시키고, 구분하려면 깨끗한 전후 가속도 측정이
+필요한데 실패했습니다:
+- 정지→출발→정지 한 사이클의 가속도 총합은 **물리적으로 정확히 0** 입니다
+  (속도가 0 으로 돌아오므로). 방향 부호를 곱해 누적하는 방식은 원리적으로 안 됩니다.
+- 오도메트리 위치에서 가속도를 미분해 회귀하는 방식도 실패했습니다. 위치
+  분해능이 1 mm, 발행 30 Hz 라 두 번 미분하면 양자화 잡음이 폭증합니다
+  (최대 가속도가 19 m/s^2 로 나옴 — 중력의 2배, 명백한 잡음).
+
+**그래서 모호성이 영향을 못 주게 설계했습니다:**
+- URDF 는 `roll 180도` 를 씁니다 (`imu_mount_rpy`, 실기일 때만 적용)
+- EKF 는 IMU 에서 **yaw rate 만** 받습니다. 절대 방위는 안 받습니다 —
+  X/Y 모호성이 실제로 갈리는 유일한 값이 절대 방위이기 때문입니다.
+  yaw **rate** 에 대해서는 두 경우가 완전히 같은 보정입니다.
+
+평면 SLAM 에서는 이것으로 충분합니다. 지자기 기준 절대 방위 초기화 같은 게
+필요해지면 그때 X/Y 를 확정해야 하고, 그때는 IMU 실물의 축 표시를 눈으로
+보는 편이 빠릅니다 (다만 남의 장비 패널이라 사전 허가 필요).
+
+측정 스크립트는 `scripts/check_imu_mounting.py` 에 남겨뒀습니다.
+
+### 10-3. ⚠ FTDI `latency_timer` — 재부팅·재연결 때마다 되돌아옵니다
+
+**증상.** `tetra_drive_node` 가 `BV round trip failed: short BV reply` 를
+초당 한 번씩 뱉습니다. 응답 바이트가 1~3 개만 도착합니다 (정상은 16 바이트).
+
+**원인.** FTDI 어댑터의 USB `latency_timer` 기본값이 **16 ms** 입니다. 칩이
+수신 바이트를 모아뒀다 몰아서 호스트로 넘기는데, 그 사이 공백이 프레임 끝과
+구분되지 않습니다. `probe_drive_board.py`(파이썬)는 `idle_gap` 을 20 ms 로
+잡아서 우연히 이 문제를 피해 갔고, 그래서 **파이썬 프로브는 되는데 ROS 노드만
+안 되는** 혼란스러운 상황이 나옵니다.
+
+**해결.**
+```
+sudo sh -c 'echo 1 > /sys/bus/usb-serial/devices/ttyUSB0/latency_timer'
+```
+
+udev 규칙에 `ATTR{latency_timer}="1"` 을 넣어 뒀지만(`udev/99-tetra-serial.rules`),
+**실제로는 잘 안 먹습니다.** 하루 동안 USB 를 재연결할 때마다 16 으로
+돌아갔습니다. 그때마다 위 명령을 다시 쳐야 합니다. `slam.launch.py` 의
+docstring 에도 사전 준비로 적어뒀습니다.
+
+`drive_board.cpp` 의 `read_frame()` 도 ETX 값 매칭 대신 **바이트 간 공백**으로
+프레임 끝을 판정하도록 고쳤습니다(`IDLE_GAP_MS = 5`, `poll()` 기반). 다만
+이것만으로는 부족하고 `latency_timer` 를 낮춰야 합니다.
+
+### 10-4. ⚠ "short BV reply" 가 사실은 비상정지였습니다
+
+BV 응답이 `02 32 03 31` (4 바이트) 로 오면 그건 프로토콜 오류가 아니라
+**비상정지가 걸린 상태**입니다. `rx[1] = 0x32` 가 E-stop 을 뜻하고, 이때
+보드는 오도메트리 페이로드 없이 상태만 돌려줍니다.
+
+기존 코드는 이걸 길이만 보고 `short BV reply` 로 뭉뚱그려서, 프레이밍 버그를
+찾느라 시간을 썼습니다. `drive_board.cpp` 를 고쳐서 이제
+`emergency stop engaged at the robot` 이라고 정확히 말합니다.
+
+**진단 순서를 기억할 것:** `short BV reply` 가 나오면 ① 로봇 전원 ② 비상정지
+③ `latency_timer` 순으로 확인하세요. 프로토콜 코드는 마지막입니다.
+
+### 10-5. 실기 SLAM 구성 — `slam.launch.py`
+
+```
+ros2 launch tetra_dsv_s_bringup slam.launch.py
+```
+
+구동부 + VLP-16 + IMU + EKF + slam_toolbox 를 한 번에 띄웁니다.
+`slam:=false` 로 지도 작성만 뺄 수 있습니다.
+
+TF 소유권 (시뮬과 동일하게 유지):
+
+```
+map        -> odom             slam_toolbox
+odom       -> base_footprint   EKF (robot_localization)
+base_*     -> 나머지            robot_state_publisher (URDF)
+```
+
+드라이브 노드는 TF 를 내지 않습니다. 여기서 부모가 둘이 되면 트리가 깨집니다.
+
+새로 만든 설정 (`tetra_dsv_s_bringup/config/`):
+
+| 파일 | 핵심 |
+|---|---|
+| `velodyne_vlp16.yaml` | `frame_id: velodyne_link` — 드라이버 기본값 `velodyne` 이면 SLAM 이 TF 를 못 찾아 **조용히** 멈춥니다 |
+| `imu_gv7.yml` | PPS·declination 비활성 (§10-2) |
+| `ekf.yaml` | 휠에서 `vx,wz` / IMU 에서 yaw rate 만 |
+| `slam_toolbox.yaml` | `max_laser_range: 20.0`, 이동·회전 문턱으로 젯슨 부하 억제 |
+
+**설정에서 당한 함정 두 개:**
+
+1. **`process_noise_covariance` 는 15x15 = 225 개**여야 합니다. 상태 벡터가
+   15 차원(x y z, rpy, v, ω, a)이기 때문입니다. 6x6 = 36 개를 넣었더니 EKF 가
+   즉시 `Critical Error, NaNs were detected` 를 초당 30 번씩 뱉었습니다.
+   지금은 아예 안 쓰고 기본값에 맡깁니다 — 실측 없이 손으로 고치면 더 나빠집니다.
+2. **velodyne `calibration` 은 절대 경로**여야 합니다. `VLP16db.yaml` 처럼
+   파일명만 주면 `Failed to open calibration file` 로 SIGABRT 입니다.
+   velodyne 패키지 자신의 launch 도 `os.path.join` 으로 경로를 만들어 넘깁니다.
+   그래서 이 값은 yaml 이 아니라 `slam.launch.py` 에서 채웁니다.
+
+### 10-6. 실기 검증 결과 (2026-08-13 기준)
+
+| 계통 | 결과 |
+|---|---|
+| 구동부 | cmd_vel 주행 확인, `/wheel_odometry` **30 Hz 안정** |
+| VLP-16 | `192.168.1.201`, 754 pkt/s (600 RPM), `/scan` **9.8 Hz** |
+| IMU GV7 | `/imu/data` **100 Hz**, `frame_id: imu_link` |
+| EKF | `odom -> base_footprint` 정상 |
+| slam_toolbox | `/map` 2 초 주기, `map -> base_footprint` 체인 완성 |
+| 원격 RViz | 노트북에서 지도·스캔·로봇모델 표시 확인 |
+
+젯슨 부하: load average 2.6 (6 코어). **1 등이 VSCode(70%)** 였습니다 —
+본격 매핑 때는 젯슨 데스크톱의 VSCode·크롬을 닫으세요. 닫기 전에는 `/scan` 이
+4~6 Hz 까지 떨어졌습니다(정상 10 Hz).
+
+네트워크 설정 (재부팅 후에도 유지되도록 NetworkManager 프로파일로):
+```
+sudo nmcli con add type ethernet ifname enP8p1s0 con-name lidar \
+  ipv4.method manual ipv4.addresses 192.168.1.150/24 \
+  ipv4.never-default yes ipv6.method ignore
+```
+`ipv4.never-default yes` 가 중요합니다. 없으면 라이다망이 기본 경로를 가로채
+인터넷이 끊깁니다. 참고로 `ip addr add` 로 수동 지정하면 NetworkManager 가
+곧바로 지워버립니다 — 반드시 프로파일로 등록해야 합니다.
+
+### 10-7. 다음에 할 것
+
+- **지도 저장·검증.** `ros2 run nav2_map_server map_saver_cli -f ~/maps/tetra_map`
+  (`use_sim_time` 붙이면 실패 — §6-9)
+- **실기 Nav2.** 시뮬 설정을 그대로 못 씁니다. 시뮬 config 는 `use_sim_time: True`.
+- **RealSense D455.** 하드웨어는 이미 붙어 있는데 ROS 패키지가 없습니다.
+  뎁스 카메라를 쓸지 결정 필요.
+- **IMU X/Y 축 확정.** 지금은 회피 설계로 넘어갔습니다 (§10-2).
+- **PL2303 시리얼의 정체.** 커널 드라이버가 안 올라와 포트가 안 생깁니다.
+  전원/센서 보드(CN24)일 가능성이 있습니다.
+- **NUC 원상복구 절차.** 지금 USB 허브를 젯슨이 가져간 상태입니다. 업체에
+  돌려줘야 할 때를 대비해 배선 사진을 남겨두는 게 좋습니다.

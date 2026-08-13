@@ -25,7 +25,15 @@
 # Drive board (CN20, 115200) -> /dev/tetra_drive
 # Filled in 2026-08-12: FTDI FT232R adapter, currently seated on CN20.
 #     udevadm info -a -n /dev/ttyUSB0 | grep -E 'idVendor|idProduct|serial'
-SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", ATTRS{serial}=="A9R3ADK4", SYMLINK+="tetra_drive", MODE="0666"
+#
+# latency_timer=1: FTDI's default (16ms) buffers incoming bytes and flushes
+# them to the host in chunks, so a single BV reply can arrive split across
+# two reads with a multi-ms gap in between - indistinguishable on the wire
+# from the reply actually ending there. Confirmed 2026-08-13: tetra_drive_node
+# saw truncated BV replies (2-3 bytes of a 16-byte frame) at the default
+# timer; dropping it to 1ms fixed it immediately. Without this line the value
+# resets to 16 on every unplug/reboot.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", ATTRS{serial}=="A9R3ADK4", SYMLINK+="tetra_drive", MODE="0666", ATTR{latency_timer}="1"
 
 # Power / sensor board (CN24, 115200) -> /dev/tetra_power
 # TODO: not yet filled in — this board's USB-serial adapter isn't plugged in

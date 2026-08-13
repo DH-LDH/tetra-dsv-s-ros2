@@ -23,13 +23,14 @@ ament_target_dependencies(tetra_drive_node
   rclcpp geometry_msgs nav_msgs sensor_msgs std_msgs)
 
 install(TARGETS tetra_drive_node DESTINATION lib/${PROJECT_NAME})
-# "config" is deliberately absent: the directory exists but is still empty, and
-# git does not store empty directories, so listing it here breaks every fresh
-# clone (see tetra_dsv_s_description/CMakeLists.txt for the same bug). Add it
-# back together with the real-robot ekf/nav2/slam configs - the sim copies carry
-# use_sim_time: True and cannot be reused as they are.
-install(DIRECTORY launch udev DESTINATION share/${PROJECT_NAME})
+# "config" now holds the real-robot configs written on 2026-08-13 (velodyne,
+# imu_gv7, ekf, slam_toolbox), so it is installed again. It was left out while
+# empty because git does not store empty directories and listing it broke every
+# fresh clone. The sim copies still cannot be reused as they are - they carry
+# use_sim_time: True.
+install(DIRECTORY launch udev config DESTINATION share/${PROJECT_NAME})
 install(PROGRAMS scripts/probe_drive_board.py
+                 scripts/check_imu_mounting.py
         DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

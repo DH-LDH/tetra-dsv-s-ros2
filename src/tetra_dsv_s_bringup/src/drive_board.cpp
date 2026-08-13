@@ -1,6 +1,7 @@
 #include "tetra_dsv_s_bringup/drive_board.hpp"
 
 #include <fcntl.h>
+#include <poll.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -15,6 +16,11 @@ namespace
 constexpr uint8_t STX = 0x02;
 constexpr uint8_t ETX = 0x03;
 constexpr size_t MAX_FRAME = 64;
+// Gap between bytes that means "the board's burst is over", once at least
+// one byte has arrived. Real inter-byte gaps inside a burst are ~87us at
+// 115200 baud, so this has ample margin without adding real latency to the
+// 30Hz control loop.
+constexpr int IDLE_GAP_MS = 5;
 }  // namespace
 
 DriveBoard::~DriveBoard()
@@ -127,26 +133,38 @@ int DriveBoard::read_frame(uint8_t * buf, size_t max_len)
   }
   size_t got = 0;
   while (got < max_len) {
+    // Frame end is judged by a quiet gap on the wire, not by matching ETX
+    // (0x03) as a byte value: that value recurs constantly inside the
+    // payload (e.g. theta_raw's high byte), which used to truncate BV
+    // replies before they could be decoded. The board sends each reply as
+    // one burst, so any gap this size past the first byte means it's done.
+    struct pollfd pfd{fd_, POLLIN, 0};
+    const int wait_ms = (got == 0) ? read_timeout_ms_ : IDLE_GAP_MS;
+    const int pr = ::poll(&pfd, 1, wait_ms);
+    if (pr < 0) {
+      if (errno == EINTR) {continue;}
+      last_error_ = std::string("poll: ") + std::strerror(errno);
+      return -1;
+    }
+    if (pr == 0) {
+      if (got == 0) {
+        last_error_ = "read timeout";
+        return -1;
+      }
+      return static_cast<int>(got);
+    }
+
     const ssize_t n = ::read(fd_, buf + got, 1);
     if (n < 0) {
       if (errno == EINTR) {continue;}
       last_error_ = std::string("read: ") + std::strerror(errno);
       return -1;
     }
-    if (n == 0) {
-      last_error_ = "read timeout";
-      return -1;  // VTIME expired
-    }
+    if (n == 0) {continue;}  // spurious wakeup, retry
     // Resynchronise: ignore anything before STX so a half-consumed reply from
     // a previous cycle cannot shift every field by a byte.
     if (got == 0 && buf[0] != STX) {continue;}
     ++got;
-    if (buf[got - 1] == ETX) {
-      // One trailing LRC byte follows ETX.
-      const ssize_t l = ::read(fd_, buf + got, 1);
-      if (l == 1) {++got;}
-      return static_cast<int>(got);
-    }
   }
   last_error_ = "frame overrun";
   return -1;
@@ -183,7 +201,16 @@ bool DriveBoard::set_velocity(int left_mm_s, int right_mm_s, DriveState & state)
   uint8_t rx[MAX_FRAME] = {0};
   const int n = read_frame(rx, MAX_FRAME);
   if (n < 14) {
-    if (n >= 0) {last_error_ = "short BV reply";}
+    // With E-stop engaged the board answers with a status-only frame
+    // (02 32 03 LRC) and no odometry payload. That is a robot state, not a
+    // protocol fault - say so, or the next person spends an afternoon
+    // debugging the framing code like we did on 2026-08-13.
+    if (n >= 4 && rx[1] == 0x32) {
+      state.emergency = true;
+      last_error_ = "emergency stop engaged at the robot";
+    } else if (n >= 0) {
+      last_error_ = "short BV reply";
+    }
     return false;
   }
 

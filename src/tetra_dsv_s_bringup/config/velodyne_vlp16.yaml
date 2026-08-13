@@ -1,0 +1,51 @@
+# VLP-16 파라미터 — 실기. 기본값에서 바꾼 것만 의미가 있습니다.
+#
+# device_ip 는 공장 기본값 그대로 쓰고 있습니다 (2026-08-13 실측: 라이다가
+# 192.168.1.201 에서 255.255.255.255:2368 로 브로드캐스트, 초당 754 패킷 =
+# 600 RPM). 브로드캐스트라 NUC 과 젯슨이 동시에 받을 수 있어서, 업체 NUC 의
+# 랜선을 뽑지 않고 스위치 빈 포트에 젯슨을 더하기만 하면 됩니다.
+#
+# 젯슨은 이 서브넷에 고정 IP 가 필요합니다 (NetworkManager 프로파일 'lidar',
+# 192.168.1.150/24, ipv4.never-default 로 인터넷 경로는 와이파이에 둠).
+
+velodyne_driver_node:
+  ros__parameters:
+    device_ip: 192.168.1.201
+    gps_time: false
+    time_offset: 0.0
+    enabled: true
+    read_once: false
+    read_fast: false
+    repeat_delay: 0.0
+    model: VLP16
+    rpm: 600.0
+    port: 2368
+    timestamp_first_packet: false
+    # 드라이버 기본값은 "velodyne" 인데 URDF 의 링크 이름은 velodyne_link
+    # 입니다. 맞춰두지 않으면 SLAM 이 스캔을 base_footprint 로 옮길 TF 를
+    # 찾지 못해 조용히 아무것도 안 합니다.
+    frame_id: velodyne_link
+
+velodyne_transform_node:
+  ros__parameters:
+    # calibration 은 여기 적지 않습니다. 이 노드는 파일명이 아니라 **절대
+    # 경로**를 요구해서, 이름만 적으면 "Failed to open calibration file" 로
+    # 죽습니다 (2026-08-13). velodyne 패키지 자신의 launch 도 그래서
+    # os.path.join 으로 경로를 만들어 넘깁니다. slam.launch.py 가 같은 일을
+    # 합니다.
+    model: VLP16
+    # 0.9 m 미만은 버립니다. 마스트와 차체 상판이 이 안에 들어옵니다.
+    min_range: 0.9
+    max_range: 130.0
+    view_direction: 0.0
+    fixed_frame: ""
+    target_frame: ""
+    organize_cloud: true
+
+velodyne_laserscan_node:
+  ros__parameters:
+    # 16개 링 중 수평에 가장 가까운 것을 2D 스캔으로 씁니다. -1 이면 자동
+    # 선택인데, 실기에서는 라이다가 마스트 위에 수평으로 달려 있으므로
+    # 자동으로 두어도 중간 링이 잡힙니다.
+    ring: -1
+    resolution: 0.007
