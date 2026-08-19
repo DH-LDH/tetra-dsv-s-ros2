@@ -20,7 +20,7 @@
 | IMU MicroStrain 3DM-GV7-AHRS | ✅ `/imu/data` 100 Hz |
 | EKF (`odom→base_footprint`) | ✅ |
 | slam_toolbox | ✅ 지도 생성 확인 |
-| Nav2 자율주행 | ⬜ 시뮬만. 실기 미착수 |
+| Nav2 자율주행 | ✅ 실기 첫 자율주행 성공 (2026-08-19). 목표 7개 전부 도달. 후진 미지원 (HANDOFF §10-18~§10-20) |
 | RealSense D455 | ⬜ 하드웨어는 붙어 있고 드라이버 미설치 |
 
 ---
@@ -77,6 +77,70 @@ ros2 run nav2_map_server map_saver_cli -f ~/maps/tetra_map
 ```
 
 > `use_sim_time` 을 붙이면 실패합니다 (HANDOFF §6-9).
+
+## Nav2 자율주행 실행
+
+지도는 이미 만들어져 있고(`~/maps/tetra_lab_closed.{pgm,yaml}`) `config/nav2_params.yaml`,
+`launch/navigation.launch.py` 도 이미 있습니다. 매번 아래 순서 그대로 하면 됩니다.
+왜 이 순서인지는 HANDOFF §10-18~§10-20 참고.
+
+**젯슨:**
+
+```bash
+# 1. 매번 필요한 것 (재부팅하면 초기화됨) — 맨 위 "매번 해야 하는 것" 참고
+sudo sh -c 'echo 1 > /sys/bus/usb-serial/devices/ttyUSB0/latency_timer'
+nmcli con up lidar   # 보통 자동 연결되지만 안 붙어 있으면
+
+# 2. discovery server — 이 터미널을 계속 띄워둘 것
+fast-discovery-server --server-id 0 --udp-port 11811
+```
+
+**다른 터미널에서 Nav2 실행 — `ROS_DISCOVERY_SERVER` 를 반드시 이 셸에도 걸 것:**
+
+```bash
+cd ~/tetra_ws
+source /opt/ros/humble/setup.bash && source install/setup.bash
+export ROS_DISCOVERY_SERVER="10.101.111.244:11811"
+
+ros2 launch tetra_dsv_s_bringup navigation.launch.py
+```
+
+> discovery server 만 띄워두고 이 export 를 빼먹으면, 로봇 노드끼리는 잘 통신해서
+> 젯슨 로컬에서는 멀쩡해 보이는데 노트북에서는 영원히 안 보입니다 (§10-1 함정 3번).
+
+**노트북 (원격 RViz):**
+
+```bash
+source /opt/ros/humble/setup.bash
+export ROS_DOMAIN_ID=25
+export ROS_LOCALHOST_ONLY=0
+export ROS_DISCOVERY_SERVER="10.101.111.244:11811"
+export FASTRTPS_DEFAULT_PROFILES_FILE=~/tetra_dds/super_client.xml
+
+ros2 daemon stop
+sleep 3
+ros2 topic list   # /map, /scan, /tf 등이 보여야 정상
+
+rviz2 -d /opt/ros/humble/share/nav2_bringup/rviz/nav2_default_view.rviz
+```
+
+> `slam.rviz` 에는 `2D Pose Estimate`/`Nav2 Goal` 도구가 없습니다. 위
+> `nav2_default_view.rviz` (apt 로 이미 깔려 있음)를 쓰세요.
+
+> **`ros2 topic list` 가 처음엔 비어 나오거나 몇 개만 보일 수 있습니다.**
+> 무선 + discovery server 경유라 왕복이 느립니다 (§10-11). 몇 초 간격으로
+> 2~3 번 다시 쳐보세요. 그래도 계속 `/parameter_events`, `/rosout` 둘뿐이면
+> 그때는 진짜 문제입니다 — 젯슨 쪽 discovery server 랑 `ROS_DISCOVERY_SERVER`
+> export 여부부터 확인하세요.
+
+**RViz 에서:**
+
+1. 로봇을 매핑 시작했던 자리(지도 원점 근처)로 옮기고, 실제 방향과 맞춰서 `2D Pose Estimate` 로 위치 지정.
+2. `Navigation 2` 패널의 `Localization` 이 `active` 로 바뀌는지 확인.
+3. `Nav2 Goal` 로 목표 지정 — **1 m 안쪽부터, 비상정지에 손 얹고, 바닥 비운 채로.**
+
+> 지금 설정은 후진을 못 냅니다 (`min_vel_x: 0.0`) — 목표가 뒤에 있으면 제자리
+> 회전 후 전진합니다. 앞 공간을 미리 비워두세요.
 
 ## 구동부만 띄우기
 

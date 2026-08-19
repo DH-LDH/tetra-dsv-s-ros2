@@ -700,7 +700,7 @@ export FASTRTPS_DEFAULT_PROFILES_FILE=~/tetra_dds/super_client.xml
 서버 주소를 담습니다. 서버 GUID prefix 는 server-id 0 일 때
 `44.53.00.5f.45.50.52.4f.53.49.4d.41` 로 고정입니다.
 
-**무증상 함정 두 개 — 둘 다 실제로 당했습니다:**
+**무증상 함정 세 개 — 전부 실제로 당했습니다:**
 
 1. **SUPER_CLIENT 프로파일 없이 환경변수만 설정하면** 노드끼리는 통신하지만
    `ros2 topic list` 같은 CLI 는 여전히 아무것도 못 봅니다. CLI 는 자기가
@@ -710,6 +710,23 @@ export FASTRTPS_DEFAULT_PROFILES_FILE=~/tetra_dds/super_client.xml
    이전 디스커버리 설정을 캐시한 채 살아 있습니다. 환경변수를 바꿨으면
    **반드시** 데몬을 죽이고 다시 조회해야 합니다. 이것 때문에 "설정이 틀렸나"
    하고 한참 헤맸습니다.
+3. **젯슨 쪽에서 로봇 노드를 띄우는 셸에 `ROS_DISCOVERY_SERVER` 를 안
+   걸어도, 젯슨 로컬에서는 아무 이상 없이 다 됩니다** (2026-08-19 실측).
+   같은 호스트 안에서는 멀티캐스트가 안 막히므로 로봇 노드들끼리는 로컬
+   멀티캐스트로 서로 잘 찾고, `ros2 topic echo`/`ros2 topic list` 도 젯슨
+   로컬에서 돌리면 전부 정상으로 보입니다. 문제는 이 노드들이 discovery
+   server 에는 **한 번도 등록되지 않았다는 것** — 서버 프로세스 자체는
+   멀쩡히 떠 있어도(포트 11811 정상 리스닝) 노트북의 SUPER_CLIENT 는 그
+   서버를 통해서만 디스커버리하므로 로봇 노드를 영원히 못 봅니다. 증상은
+   "젯슨에서는 토픽이 다 보이는데 노트북에서는 `/parameter_events`,
+   `/rosout` 둘뿐" — §10-1 처음에 적은 게스트망 증상과 **완전히 똑같이
+   보입니다.** 구분법: 서버 프로세스(`ps aux | grep discovery`, 포트
+   11811 `ss -uln`)와 로봇을 띄운 셸의 `env | grep ROS_DISCOVERY_SERVER`
+   를 같이 확인하세요 — 서버는 떠 있는데 이 환경변수가 비어 있으면 이
+   함정입니다. `slam.launch.py`/`navigation.launch.py` 를 실행하는 **바로 그
+   셸**에서 `export ROS_DISCOVERY_SERVER="10.101.111.244:11811"` 를 먼저
+   실행한 뒤 launch 해야 합니다 — 다른 터미널에서 서버만 띄워놓고 딴
+   터미널에서 launch 하면 이 환경변수가 그 터미널에는 없다는 걸 잊기 쉽습니다.
 
 **근본 해결.** 정규 사내망이나 별도 공유기로 옮기면 Discovery Server 없이
 그냥 됩니다. 게스트망에 계속 있어야 한다면 위 구성을 유지하세요.
@@ -1392,3 +1409,148 @@ slam_toolbox         ->   제거
 | `check_pose_error.py` | 자세가 얼마나 틀어졌는지 (yaw/x/y 로 분해) |
 | `check_scan_through.py` | 먼 스캔 점이 철창 투과인지 미탐색인지 (§10-10) |
 | `check_imu_mounting.py` | IMU 장착 축 (§10-2) |
+
+### 10-19. 2026-08-19 — 0/1/2단계 완료, 3단계(첫 주행) 직전
+
+§10-18 계획대로 0~2단계를 마쳤습니다. 3단계(첫 주행)만 남았고, 이건 로봇이
+실제로 움직이므로 사용자 확인 없이 진행하지 않습니다.
+
+**0단계 — 지도 경계 닫기.** `~/maps/tetra_lab_closed.{pgm,yaml}` 신규 생성
+(원본 `tetra_lab_main` 은 그대로 둠). 벽 네 변을 기존 점유칸 중앙값 위치에
+실선으로 닫고, 도달 불가능한 자유 공간은 전부 미지로 되돌렸습니다(반대
+방향은 한 번도 안 함 — 미지를 자유로 칠한 적 없음). 사용자 확인 결과 위/아래
+회색 덩어리가 실제 장애물이라 사각형으로 채우고 벽까지 붙였습니다.
+
+```
+자유 공간   15.59 -> 7.37 m^2   (실제 방 7.2 m^2 근접, 검증 통과)
+```
+
+방 짧은 변이 지도에서 2.70 m 로 나온 것(§10-16 은 2.4 m 기록) — **사용자
+확인 결과 §10-16 의 2.4 m 가 오기였습니다.** 지도 값(2.70 m)이 맞습니다.
+문이 사방 중 한 곳 막혀 있는 것도 의도된 것입니다(실험실 안에서만 주행).
+
+**1단계 — `config/nav2_params.yaml` 신규 작성.** `nav2_bringup` 기본값에서
+시작해 §10-18 표의 6개 값을 반영했고, 표에 없던 수정도 했습니다:
+
+- `robot_base_frame` 을 전부 `base_link` -> `base_footprint` 로 고침. 기본값
+  그대로면 TF 를 못 찾아 조용히 멈췄을 것 (§10-5 와 동일한 함정).
+- `odom_topic` 을 `/wheel_odometry` 가 아니라 EKF 가 실제로 내는
+  `/odometry/filtered` 로.
+- `map_server.yaml_filename` 을 `tetra_lab_closed.yaml` 로 하드코딩.
+- `planner_server.allow_unknown: true -> false`. 0단계 원칙("미지는 갈 수
+  있는 곳이 아니다")을 planner 에도 적용.
+- `local_costmap`/`global_costmap` 의 `obstacle_layer.scan.raytrace_max_range`
+  `/obstacle_max_range` 를 기본 3.0/2.5 에서 3.5/3.0 으로. §10-10 의 "로컬
+  코스트맵이 철창을 스스로 지운다"는 문제가 정적 지도(0단계로 막음)뿐 아니라
+  **실시간 코스트맵에도 똑같이 적용됩니다** — 미검증, 실주행에서 벽이
+  지워지면 더 줄일 것.
+- 선속도 0.05 m/s, 각속도 0.2 rad/s (사용자 지정, 2026-08-19). `max_vel_x`,
+  `max_speed_xy`, `velocity_smoother` 의 선속도, `behavior_server` 의
+  `max_rotational_vel`/`min_rotational_vel` 까지 전부 일관되게 맞췄습니다
+  (behavior_server 기본값 1.0/0.4 를 그대로 두면 min > max 가 되어 Spin
+  복구가 아예 실패했을 것).
+
+**2단계 — `launch/navigation.launch.py` 신규 작성.** `slam.launch.py` 에서
+slam_toolbox 를 빼고 map_server + AMCL + Nav2 스택(controller/smoother/
+planner/behavior_server/bt_navigator/waypoint_follower/velocity_smoother)과
+lifecycle_manager 두 개(localization, navigation, 둘 다 autostart: true)를
+더했습니다. 속도 파이프라인은 `nav2_bringup` 표준과 동일하게
+`controller_server -> /cmd_vel_nav -> velocity_smoother -> /cmd_vel` 로
+리매핑 — 이걸 빼먹으면 가감속 제한 없이 원속도가 그대로 나갑니다.
+
+**젯슨 실기 검증 중 잡은 버그 두 개 — 둘 다 코드 리뷰로는 못 잡고 실제로
+띄워봐야 나왔습니다:**
+
+1. **`local_costmap.width/height` 는 정수여야 합니다.** §10-18 표가 권장한
+   `1.5` 를 그대로 넣었더니 `controller_server` 가 기동 직후
+   `InvalidParameterTypeException`(`height` is of type integer, setting it
+   to double is not allowed)으로 죽었습니다. 이 Nav2 빌드(1.1.20)가
+   width/height 를 정수로 선언해 둔 탓입니다 — `nav2_bringup` 기본값이
+   `3.0` 이 아니라 `3` 인 이유가 이것이었습니다. 표 범위(1.5~2.0)의 정수
+   상한인 **2** 로 바꿔서 해결.
+2. **`voxel_layer` 는 이 로봇에 안 맞습니다.** `local_costmap` 기본
+   플러그인은 3D `voxel_layer` 인데, `z_voxels(16) x z_resolution(0.05)
+   = 0.8 m` 높이까지만 격자를 만듭니다. 라이다 실측 장착 높이가 1.048 m
+   (§10-9)라 센서 원점 자체가 격자 천장보다 높아서 `Sensor origin ... out
+   of map bounds` 경고와 함께 raytrace 가 전혀 안 됐습니다. `/scan` 이
+   VLP-16 한 링짜리 2D `LaserScan` 이라 애초에 3D voxel 이 필요 없어서,
+   `global_costmap` 이 이미 쓰던 `obstacle_layer`(2D)로 통일해 해결.
+
+**검증 결과 (젯슨에서 직접 launch, cmd_vel 은 안 보냄):**
+
+```
+노드 20개 전부 활성화 (lifecycle_manager_localization/navigation 둘 다
+  "Managed nodes are active")
+odom -> base_footprint         정상 (EKF)
+base_footprint -> velodyne_link  [0, 0, 1.048]  <- §10-9 실측치와 정확히 일치
+/wheel_odometry, /scan, /imu/data, /odometry/filtered, /map  전부 발행 확인
+/cmd_vel_nav: controller_server -> velocity_smoother  리매핑 정상
+/cmd_vel: 구독자 tetra_drive 하나뿐  정상
+map -> odom  없음 (정상 — AMCL 이 초기 위치 대기 중, §10-18 3단계에서 사람이
+  RViz "2D Pose Estimate" 로 직접 지정해야 함)
+```
+
+**남은 것 — 3단계(첫 주행).** RViz 2D Pose Estimate 로 초기 위치 지정 후
+Nav2 Goal 은 1 m 앞부터, 비상정지에 손을 얹고, 바닥 비운 채로 시작
+(§10-18 절차 그대로). 노트북 RViz 는 discovery server 우회가 필요합니다
+(§10-1) — 아직 안 띄웠습니다.
+
+### 10-20. 2026-08-19 오후 — 3단계: 첫 자율주행 성공
+
+점심 먹고 돌아와 젯슨을 재부팅한 상태에서 이어갔습니다. §10-1 세 번째 함정
+(`ROS_DISCOVERY_SERVER` 안 걸고 launch)을 실제로 한 번 더 겪었고, 그걸 고친
+뒤로는 순조로웠습니다.
+
+**속도.** 실행 중인 노드에서 직접 확인 (`ros2 param get`):
+
+```
+FollowPath.max_vel_x       0.05 m/s
+FollowPath.max_vel_theta   0.2  rad/s
+velocity_smoother          [0.05, 0.0, 0.2] / [-0.05, 0.0, -0.2]
+```
+
+**⚠ `FollowPath.min_vel_x` 가 0.0 입니다 — 후진을 아예 못 냅니다.** 목표가
+로봇 뒤쪽에 있으면 후진이 아니라 **제자리 회전 후 전진**으로 도달합니다.
+오늘은 이 상태로 진행했고(앞 공간을 비우는 쪽을 택함), **후진이 실제로
+필요해지면 `min_vel_x` 를 음수로 바꿔야 합니다** — 아직 안 했습니다.
+
+**RViz 도구.** `slam.rviz` (매핑용으로 만든 기존 설정)에는 `2D Pose
+Estimate`/`Nav2 Goal` 도구가 없습니다. apt 로 이미 깔려 있는
+`/opt/ros/humble/share/nav2_bringup/rviz/nav2_default_view.rviz` 를 그대로
+썼습니다 — `SetInitialPose`, `GoalTool`, `Navigation 2` 패널이 다 들어있고
+토픽 이름도 저희 스택과 그대로 맞아서 수정 없이 됩니다. 노트북에도 같은
+버전의 nav2_bringup 이 apt 로 깔려 있으면 같은 경로에 있습니다.
+
+**초기 위치.** 로봇을 매핑 시작했던 자리(대략 지도 원점)로 손으로 옮긴 뒤
+`2D Pose Estimate` 로 지정. 처음엔 `Failed to transform initial pose in
+time (extrapolation)` 경고가 떴지만 무해했습니다 — 그 직후 `Setting pose`
+로 이어졌고 전체 스택이 정상 활성화됐습니다. **정렬 검증**
+(`check_scan_map_fit.py`, §10-13):
+
+```
+중앙값 거리   5.0 cm   (§10-13 기준 정상치와 정확히 일치)
+평균   거리   8.0 cm
+10 cm 이내   73.9%
+20 cm 이내   92.3%
+```
+
+**주행 기록.** 목표 7개, 전부 `Reached the goal!` / `Goal succeeded`.
+아무 것도 aborted/failed 없었고, `/emergency_stop` 은 계속 `false` 였습니다
+(비상정지 안 걸림). 첫 목표는 8.3초에 0.36 m 이동, 평균 속도
+0.044 m/s — 설정한 0.05 m/s 와 일치. 도중에 목표를 새로 주면 진행 중이던
+경로가 preempt 되고 즉시 새 경로로 바뀌는 것도 확인했습니다.
+
+**젯슨 쪽 CLI 진단 시 주의.** `ros2 node list` 는 discovery server 참가자
+정보만으로도 되지만, `ros2 topic list`/`echo`/`tf2_echo` 는 SUPER_CLIENT
+프로파일이 없으면 젯슨 로컬에서도 안 됩니다 (§10-1 함정 1번이 노트북뿐
+아니라 젯슨 자신에게도 적용됨). 젯슨에서 직접 진단할 때도
+`~/tetra_dds/super_client.xml` 을 걸어야 합니다. `tf2_echo` 는 SUPER_CLIENT
+를 걸어도 무선 지연 때문에 자주 응답 없이 "Terminated" 로 끊겼습니다 —
+이때는 `/amcl_pose`, `/tf` 를 `echo --once` 로 직접 찍어 확인하는 편이
+더 안정적이었습니다.
+
+**남은 것.**
+- 후진 허용 (`min_vel_x` 음수화) — 앞 공간이 좁은 상황이 다시 나오면 필요.
+- 오늘은 좁은 초기 구간(원점 근처)에서만 주행. 방 전체를 가로지르는 긴
+  주행, 장애물(§10-9 사각지대) 회피 시험은 아직 안 함.
+- RealSense D455 미장착 상태 그대로 — 1 m 아래 장애물은 여전히 안 보임.
