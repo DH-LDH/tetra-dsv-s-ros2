@@ -9,6 +9,10 @@
 **작업 이력 · 검증 수치 · 함정 목록은 전부 [HANDOFF.md](HANDOFF.md) 에 있습니다.**
 이 README 는 "어떻게 돌리는가"만 답합니다. 왜 그런지가 궁금하면 HANDOFF 를 보세요.
 
+**새 공간에 나가서 매핑부터 자율주행까지 하는 날**은
+[FIELD_CHECKLIST.md](FIELD_CHECKLIST.md) 를 순서대로 따라가세요 — 공간이
+바뀔 때 반드시 다시 잡아야 하는 파라미터들이 정리돼 있습니다.
+
 ## 현재 상태 (2026-08-13)
 
 실기에서 **SLAM 까지 동작**합니다.
@@ -266,7 +270,7 @@ git clone --filter=blob:none --sparse \
   https://github.com/DH-LDH/tetra-dsv-s-ros2.git ~/tetra_ws
 cd ~/tetra_ws
 git sparse-checkout set src/tetra_dsv_s_description src/tetra_dsv_s_bringup \
-  README.md HANDOFF.md CLAUDE.md
+  README.md HANDOFF.md CLAUDE.md FIELD_CHECKLIST.md
 git config user.name "DH-LDH"
 git config user.email "ekgks3451@gmail.com"
 ```
