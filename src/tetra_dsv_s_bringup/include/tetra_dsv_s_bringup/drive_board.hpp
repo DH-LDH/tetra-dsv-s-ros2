@@ -54,6 +54,15 @@ public:
   void close();
   bool is_open() const {return fd_ >= 0;}
 
+  /// CG - clear latched EMG/bumper/motor error state on the board. Not just
+  /// for a real E-stop press: a full power cycle of the robot chassis leaves
+  /// the board in this same latched state (rx[1]==0x32, short status-only
+  /// reply) with no button involved (2026-08-24, confirmed via probe_cg.py -
+  /// CG alone flipped it back to 0x30 with the E-stop untouched). Call this
+  /// before set_velocity_mode()/set_servo() on every startup, not just after
+  /// a real E-stop press.
+  bool reset_error();
+
   /// CZ11 - required before BV will move anything. The board boots in position
   /// mode; sending velocities without this is accepted and silently ignored.
   bool set_velocity_mode();

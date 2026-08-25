@@ -84,6 +84,14 @@ public:
       throw std::runtime_error("drive board open failed");
     }
 
+    // A full power cycle of the robot chassis (not just the E-stop button)
+    // leaves the board latched in an error state (BV replies with a
+    // short status-only frame instead of odometry) - clear it before doing
+    // anything else, or every subsequent BV looks like a live E-stop press.
+    if (!board_.reset_error()) {
+      RCLCPP_WARN(get_logger(), "reset_error (CG) failed: %s", board_.last_error().c_str());
+    }
+
     // The board boots in position mode and ignores BV until told otherwise.
     // This is a silent failure: velocities are accepted, nothing moves.
     if (!board_.set_velocity_mode()) {
@@ -205,11 +213,16 @@ private:
 
     sensor_msgs::msg::JointState js;
     js.header.stamp = stamp;
-    js.name = {"left_wheel_joint", "right_wheel_joint"};
-    js.position = {left_pos_, right_pos_};
+    // rear_caster_joint is unsensed (free-swiveling, no encoder) - publish a
+    // fixed 0.0 just so robot_state_publisher has a value to compute its TF
+    // from. Without this the caster link gets no transform at all and
+    // RobotModel in RViz reports "No transform from [rear_caster_link]".
+    js.name = {"left_wheel_joint", "right_wheel_joint", "rear_caster_joint"};
+    js.position = {left_pos_, right_pos_, 0.0};
     js.velocity = {
       (vx - wz * half_track) / wheel_radius_,
-      (vx + wz * half_track) / wheel_radius_};
+      (vx + wz * half_track) / wheel_radius_,
+      0.0};
     joint_pub_->publish(js);
   }
 

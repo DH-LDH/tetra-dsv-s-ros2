@@ -13,6 +13,251 @@
 #   /odometry/filtered     EKF(robot_localization) 의 기본 발행 토픽입니다.
 #                          /wheel_odometry 가 아닙니다 — 그건 EKF 의 입력.
 
+# 순서 — 자주 조정하는 노드부터 위로. 값은 그대로, 배치만 바꿨습니다
+# (YAML 최상위 키 순서는 파싱에 영향 없음 — 각 노드는 자기 이름의 섹션만 읽습니다).
+#   1. controller_server   속도, 후진, DWB critics
+#   2. local_costmap       장애물 회피 반경/범위
+#   3. global_costmap      전역 계획용 장애물 설정
+#   4. velocity_smoother   controller_server 와 속도 맞춰야 함
+#   5. behavior_server     recovery(spin/backup) 속도
+#   6. amcl                위치추정 튜닝
+#   7. planner_server      전역 경로 tolerance/allow_unknown
+#   8. smoother_server     경로 후처리, 거의 안 건드림
+#   9. waypoint_follower   다중 목표 미션용, 지금은 안 씀
+#  10-12. bt_navigator*    행동트리 자체를 바꿀 게 아니면 안 건드림
+#  13. map_server          지도 파일 자체를 바꿀 때만
+#  14. robot_state_publisher  안 건드림
+
+controller_server:
+  ros__parameters:
+    use_sim_time: False
+    controller_frequency: 20.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5
+      movement_time_allowance: 10.0
+    general_goal_checker:
+      stateful: True
+      plugin: "nav2_controller::SimpleGoalChecker"
+      # 기본 0.25 -> 0.10. 방이 3 m 라 0.25 m 오차는 방의 8% 입니다 (§10-18 표).
+      xy_goal_tolerance: 0.10
+      yaw_goal_tolerance: 0.25
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: True
+      # 후진(min_vel_x < 0)을 2026-08-19 에 시도했다가 되돌렸습니다.
+      # -0.05 로 바꾸자 실주행이 이상해져서(원인 미확인) 즉시 비상정지로
+      # 세웠습니다. 원인 분석 없이 재시도하지 않습니다 — 박사님 쪽에서
+      # 후진이 실제로 필요하다고 확정되면 그때 다시 붙이고, 이번엔 원인을
+      # 밝힐 때까지 조금씩(예: -0.02) 올려가며 테스트합니다.
+      min_vel_x: 0.0
+      min_vel_y: 0.0
+      # 첫 실주행은 0.05 로 시작(2026-08-19). 저상 지도 static_layer 검증까지
+      # 끝난 뒤 2026-08-24 에 0.15 로 올림 — 사용자 지정, 후진(min_vel_x)은
+      # 여전히 0.0 유지라 위 §의 후진 불안정 이슈와는 무관.
+      max_vel_x: 0.15
+      max_vel_y: 0.0
+      max_vel_theta: 0.2
+      min_speed_xy: 0.0
+      max_speed_xy: 0.15
+      min_speed_theta: 0.0
+      acc_lim_x: 2.5
+      acc_lim_y: 0.0
+      acc_lim_theta: 3.2
+      decel_lim_x: -2.5
+      decel_lim_y: 0.0
+      decel_lim_theta: -3.2
+      vx_samples: 20
+      vy_samples: 5
+      vtheta_samples: 20
+      sim_time: 1.7
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.2
+      xy_goal_tolerance: 0.10
+      trans_stopped_velocity: 0.25
+      short_circuit_trajectory_evaluation: True
+      stateful: True
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
+      BaseObstacle.scale: 0.02
+      PathAlign.scale: 32.0
+      PathAlign.forward_point_distance: 0.1
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.1
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+      RotateToGoal.scale: 32.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: -1.0
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 5.06
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_footprint
+      use_sim_time: False
+      rolling_window: true
+      # 기본 3x3 m -> 2x2 m. 방(3.25 x 2.70 m 내부)보다 크면 무의미합니다
+      # (§10-18 표, 1.5~2.0 범위). 1.5 를 넣었더니 이 Nav2 빌드(1.1.20)는
+      # width/height 를 정수로 선언해 두어 실기에서 즉시
+      # InvalidParameterTypeException 으로 controller_server 가 죽었습니다
+      # (2026-08-19 실측). nav2_bringup 기본값도 3.0 이 아니라 3 인 이유가
+      # 이것 — 정수만 됩니다. 표 범위의 정수 상한인 2 를 씁니다.
+      width: 2
+      height: 2
+      resolution: 0.05
+      # robot_radius 는 안 씁니다 — 앞뒤가 비대칭(base_link 기준 x
+      # -0.318 ~ +0.167)이라 원형 근사가 실제보다 훨씬 크게 잡습니다.
+      # 대신 footprint 를 실측 그대로 씁니다 (URDF, 2026-08-14 실측).
+      footprint: "[[0.167,0.215],[0.167,-0.215],[-0.318,-0.215],[-0.318,0.215]]"
+      # 기본 voxel_layer(3D) -> obstacle_layer(2D). /scan 은 VLP-16 한
+      # 링짜리 2D LaserScan 인데(§10-9), voxel_layer 는 3D 격자를 만들며
+      # z_voxels(16) x z_resolution(0.05) = 0.8 m 높이까지만 잡습니다.
+      # 라이다 실측 장착 높이가 1.048 m 라 센서 원점 자체가 이 격자 천장보다
+      # 높아서 "Sensor origin ... out of map bounds" 로 raytrace 가 통째로
+      # 안 됐습니다 (2026-08-19 실기 실측 — 젯슨에서 재현). global_costmap
+      # 이 이미 쓰는 obstacle_layer(2D) 로 맞추면 이 문제 자체가 없습니다.
+      # static_layer 를 obstacle_layer 보다 먼저 둡니다 — 다른(더 낮게 장착된)
+      # 로봇이 매핑한 저상 장애물을 여기서도 신뢰해서 피하기 위함입니다.
+      # tetra 라이다는 1.048 m 높이라 이 장애물을 실시간으로는 못 봅니다
+      # (위 z_voxels 주석). obstacle_layer 의 실시간 clearing 은 자기 레이어만
+      # 지우고 static_layer 의 lethal 표시는 못 지우므로, "안 보이니까 지운다"가
+      # 일어나지 않습니다.
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        # 기본 0.55 -> 0.22. 방 양쪽 벽에서 1.1 m 씩(0.55*2) 고비용이 되면
+        # 2.4 m 짧은 변에서 planner 가 경로를 못 찾습니다 (§10-18 표).
+        # 0.20~0.25 범위의 중간값. 철창 틈(2~3 cm, §10-10)보다는 훨씬 커서
+        # 그 대책도 겸합니다.
+        inflation_radius: 0.22
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          # 기본 3.0/2.5 -> 방 대각선(3.84 m)보다 조금 짧게. 철창 틈으로
+          # 빠진 빔이 실시간에도 "여기 비어 있다"고 라이트레이싱하며 우리가
+          # 방금 지도에 그려 넣은 벽을 스스로 지울 수 있습니다 (§10-10 의
+          # "로컬 코스트맵이 철창을 스스로 지웁니다" — 정적 지도판은 0단계로
+          # 막았지만 실시간 코스트맵판은 이 파라미터가 유일한 방어선입니다).
+          # §10-17 이 정적 지도에 쓴 것과 같은 논리를 실시간 계층에도 그대로
+          # 적용한 것— 미검증, 실주행에서 벽이 지워지면 더 줄이세요.
+          raytrace_max_range: 3.5
+          raytrace_min_range: 0.0
+          obstacle_max_range: 3.0
+          obstacle_min_range: 0.0
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      # global_costmap 쪽과 같은 이유 (아래 주석). 로컬은 2x2 m(1600칸)이라
+      # 전송량 자체는 작지만, publish_frequency 가 2Hz 로 더 잦고 무선
+      # 대역을 전역 코스트맵과 나눠 쓰므로 같이 끕니다.
+      always_send_full_costmap: False
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: map
+      robot_base_frame: base_footprint
+      use_sim_time: False
+      footprint: "[[0.167,0.215],[0.167,-0.215],[-0.318,-0.215],[-0.318,0.215]]"
+      resolution: 0.05
+      track_unknown_space: true
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: True
+          marking: True
+          data_type: "LaserScan"
+          raytrace_max_range: 3.5   # local_costmap 과 같은 이유 (위 주석)
+          raytrace_min_range: 0.0
+          obstacle_max_range: 3.0
+          obstacle_min_range: 0.0
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.22
+      # ⚠ 기본/기존 True -> False. 이 지도는 777x1239 = 약 96만 칸이라 전역
+      # 코스트맵 한 장이 ~960 KB 입니다. True 면 그걸 publish_frequency(1Hz)
+      # 마다 통째로 다시 보냅니다 — 무선으로 초당 8 Mbps 가 코스트맵 하나에
+      # 나가고, 노트북 RViz 는 매 초 96만 칸을 다시 그려야 합니다. 2026-08-25
+      # 에 RViz 가 `Message Filter dropping message ... queue is full` 을
+      # 반복하다 `Segmentation fault` 로 죽은 원인으로 보입니다 (게스트망·
+      # 핫스팟 양쪽에서 동일하게 발생 — 네트워크 품질이 아니라 데이터 양
+      # 문제, HANDOFF §10-26). False 면 최초 1회 전체 + 이후 변경분만
+      # /costmap_updates 로 보냅니다. RViz Map 디스플레이가 이미 Update
+      # Topic 을 구독하고 있어 표시에는 차이가 없습니다.
+      always_send_full_costmap: False
+
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: False
+    smoothing_frequency: 20.0
+    scale_velocities: False
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.15, 0.0, 0.2]
+    min_velocity: [-0.15, 0.0, -0.2]
+    max_accel: [2.5, 0.0, 3.2]
+    max_decel: [-2.5, 0.0, -3.2]
+    odom_topic: "/odometry/filtered"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    assisted_teleop:
+      plugin: "nav2_behaviors/AssistedTeleop"
+    global_frame: odom
+    robot_base_frame: base_footprint
+    transform_tolerance: 0.1
+    use_sim_time: False
+    simulate_ahead_time: 2.0
+    # FollowPath 의 max_vel_theta(0.2) 와 맞췄습니다. 기본 1.0/0.4 를 그대로
+    # 두면 min > max 가 되어 Spin 복구 동작(§10-18 3단계에서 쓸 수 있는
+    # recovery)이 아예 실패합니다.
+    max_rotational_vel: 0.2
+    min_rotational_vel: 0.1
+    rotational_acc_lim: 3.2
+
 amcl:
   ros__parameters:
     use_sim_time: False
@@ -60,14 +305,79 @@ amcl:
     # "2D Pose Estimate" 로 매번 사람이 직접 찍습니다. §9: AMCL 의 초기 위치
     # 없는 전역 재추정은 미검증이고, 빈 직사각형 방은 특히 불리합니다.
 
+planner_server:
+  ros__parameters:
+    # 기본 20.0 -> 1.0. 이 지도에서 경로 하나 계산에 ~1초가 걸리므로 20Hz 는
+    # 애초에 달성 불가능한 목표치입니다. 이 값은 스로틀이 아니라 "느리면
+    # 경고를 찍는" 기준일 뿐이라 동작에는 영향이 없지만, 20 으로 두면
+    # "Planner loop missed its desired rate" 경고가 로그를 뒤덮어서 진짜
+    # 문제를 가립니다 (2026-08-25 에 실제로 이것 때문에 오진했습니다 —
+    # HANDOFF §10-26). 실제 재계획 주기는 BT XML 의 RateController(1Hz).
+    expected_planner_frequency: 1.0
+    use_sim_time: False
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.5
+      # 기본 false(Dijkstra, 목표 방향과 무관하게 넓게 탐색) -> true(A*).
+      # 3~4 m 방 기준(수천 칸)에선 차이가 없었지만, 2026-08-24 에 받은
+      # 38x62 m 지도(약 96만 칸)에서는 Dijkstra 의 전역 탐색이 너무 느려서
+      # compute_path_to_pose 액션 서버 ack 자체가 타임아웃 났습니다 —
+      # planner_server 내부 루프가 목표 시작과 동시에 19Hz -> 3Hz 로
+      # 떨어지는 게 로그로 확인됨(HANDOFF §10-24). A* 는 목표 방향으로만
+      # 탐색해 이 문제를 줄여줄 것으로 기대. 짧은/긴 목표 둘 다에서 재현된
+      # 문제라 CPU 부하보다 이 쪽이 더 유력한 원인.
+      use_astar: true
+      # 기본 true -> false. 미지(205)를 갈 수 있는 곳으로 보지 않겠다는
+      # 0단계와 같은 원칙입니다 — "자유 공간은 주행으로만 만들 수 있다."
+      # 이 방은 이미 대부분 자유로 채워져 있어 실질적 제약은 크지 않고,
+      # 대신 못 가본 구석으로 계획이 새는 경우를 원천 차단합니다.
+      allow_unknown: false
+
+smoother_server:
+  ros__parameters:
+    use_sim_time: False
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: True
+
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: False
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      waypoint_pause_duration: 200
+
 bt_navigator:
   ros__parameters:
     use_sim_time: False
     global_frame: map
     robot_base_frame: base_footprint
     odom_topic: /odometry/filtered
-    bt_loop_duration: 10
-    default_server_timeout: 20
+    # 기본 10ms(100Hz) -> 20ms(50Hz). 젯슨에서 "Behavior Tree tick rate
+    # 100.00 was exceeded!" 가 계속 찍혔습니다 — 틱 자체를 못 따라가는 상태로
+    # 두면 아래 타임아웃 판정까지 같이 밀립니다.
+    bt_loop_duration: 20
+    # ⚠ 기본 20(ms) -> 1000(ms). 2026-08-25 실기에서 자율주행이 반복 실패한
+    # 진짜 원인이 이것이었습니다. BT 의 action 노드가 서버에게 요청을 보내고
+    # **"받았다"는 ACK 를 기다리는 시간**이 20ms 인데, planner_server 가
+    # 이 지도(777x1239, 약 96만 칸)에서 경로 하나 계산하는 데 ~1초가
+    # 걸립니다. 계산 중이라 20ms 안에 ACK 를 못 하면 BT 는 "서버가 죽었다"로
+    # 보고 곧장 복구 동작(spin -> backup)으로 넘어갑니다. 로그상
+    #   "Passing new path to controller."      <- 경로 계산은 성공하고 있음
+    #   "Timed out while waiting for action server to acknowledge goal
+    #    request for compute_path_to_pose"     <- 그런데 ACK 를 못 받음
+    # 이 나란히 찍히는 게 결정적 증거였습니다. 3~4 m 방(계산 수십 ms)에서는
+    # 20ms 로도 맞았기 때문에 §10-18 첫 자율주행 때는 안 드러났습니다.
+    # clear_entirely_global_costmap 서비스 콜 타임아웃도 같은 값을 씁니다.
+    default_server_timeout: 1000
     wait_for_service_timeout: 1000
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
@@ -126,254 +436,16 @@ bt_navigator_navigate_to_pose_rclcpp_node:
   ros__parameters:
     use_sim_time: False
 
-controller_server:
-  ros__parameters:
-    use_sim_time: False
-    controller_frequency: 20.0
-    min_x_velocity_threshold: 0.001
-    min_y_velocity_threshold: 0.5
-    min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.3
-    progress_checker_plugin: "progress_checker"
-    goal_checker_plugins: ["general_goal_checker"]
-    controller_plugins: ["FollowPath"]
-
-    progress_checker:
-      plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.5
-      movement_time_allowance: 10.0
-    general_goal_checker:
-      stateful: True
-      plugin: "nav2_controller::SimpleGoalChecker"
-      # 기본 0.25 -> 0.10. 방이 3 m 라 0.25 m 오차는 방의 8% 입니다 (§10-18 표).
-      xy_goal_tolerance: 0.10
-      yaw_goal_tolerance: 0.25
-    FollowPath:
-      plugin: "dwb_core::DWBLocalPlanner"
-      debug_trajectory_details: True
-      min_vel_x: 0.0
-      min_vel_y: 0.0
-      # 첫 실주행은 더 낮게 — 선속도 0.05, 각속도 0.2 (2026-08-19 사용자 지정).
-      max_vel_x: 0.05
-      max_vel_y: 0.0
-      max_vel_theta: 0.2
-      min_speed_xy: 0.0
-      max_speed_xy: 0.05
-      min_speed_theta: 0.0
-      acc_lim_x: 2.5
-      acc_lim_y: 0.0
-      acc_lim_theta: 3.2
-      decel_lim_x: -2.5
-      decel_lim_y: 0.0
-      decel_lim_theta: -3.2
-      vx_samples: 20
-      vy_samples: 5
-      vtheta_samples: 20
-      sim_time: 1.7
-      linear_granularity: 0.05
-      angular_granularity: 0.025
-      transform_tolerance: 0.2
-      xy_goal_tolerance: 0.10
-      trans_stopped_velocity: 0.25
-      short_circuit_trajectory_evaluation: True
-      stateful: True
-      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02
-      PathAlign.scale: 32.0
-      PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 24.0
-      GoalAlign.forward_point_distance: 0.1
-      PathDist.scale: 32.0
-      GoalDist.scale: 24.0
-      RotateToGoal.scale: 32.0
-      RotateToGoal.slowing_factor: 5.0
-      RotateToGoal.lookahead_time: -1.0
-
-local_costmap:
-  local_costmap:
-    ros__parameters:
-      update_frequency: 5.0
-      publish_frequency: 2.0
-      global_frame: odom
-      robot_base_frame: base_footprint
-      use_sim_time: False
-      rolling_window: true
-      # 기본 3x3 m -> 2x2 m. 방(3.25 x 2.70 m 내부)보다 크면 무의미합니다
-      # (§10-18 표, 1.5~2.0 범위). 1.5 를 넣었더니 이 Nav2 빌드(1.1.20)는
-      # width/height 를 정수로 선언해 두어 실기에서 즉시
-      # InvalidParameterTypeException 으로 controller_server 가 죽었습니다
-      # (2026-08-19 실측). nav2_bringup 기본값도 3.0 이 아니라 3 인 이유가
-      # 이것 — 정수만 됩니다. 표 범위의 정수 상한인 2 를 씁니다.
-      width: 2
-      height: 2
-      resolution: 0.05
-      # robot_radius 는 안 씁니다 — 앞뒤가 비대칭(base_link 기준 x
-      # -0.318 ~ +0.167)이라 원형 근사가 실제보다 훨씬 크게 잡습니다.
-      # 대신 footprint 를 실측 그대로 씁니다 (URDF, 2026-08-14 실측).
-      footprint: "[[0.167,0.215],[0.167,-0.215],[-0.318,-0.215],[-0.318,0.215]]"
-      # 기본 voxel_layer(3D) -> obstacle_layer(2D). /scan 은 VLP-16 한
-      # 링짜리 2D LaserScan 인데(§10-9), voxel_layer 는 3D 격자를 만들며
-      # z_voxels(16) x z_resolution(0.05) = 0.8 m 높이까지만 잡습니다.
-      # 라이다 실측 장착 높이가 1.048 m 라 센서 원점 자체가 이 격자 천장보다
-      # 높아서 "Sensor origin ... out of map bounds" 로 raytrace 가 통째로
-      # 안 됐습니다 (2026-08-19 실기 실측 — 젯슨에서 재현). global_costmap
-      # 이 이미 쓰는 obstacle_layer(2D) 로 맞추면 이 문제 자체가 없습니다.
-      plugins: ["obstacle_layer", "inflation_layer"]
-      inflation_layer:
-        plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        # 기본 0.55 -> 0.22. 방 양쪽 벽에서 1.1 m 씩(0.55*2) 고비용이 되면
-        # 2.4 m 짧은 변에서 planner 가 경로를 못 찾습니다 (§10-18 표).
-        # 0.20~0.25 범위의 중간값. 철창 틈(2~3 cm, §10-10)보다는 훨씬 커서
-        # 그 대책도 겸합니다.
-        inflation_radius: 0.22
-      obstacle_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
-        enabled: True
-        observation_sources: scan
-        scan:
-          topic: /scan
-          max_obstacle_height: 2.0
-          clearing: True
-          marking: True
-          data_type: "LaserScan"
-          # 기본 3.0/2.5 -> 방 대각선(3.84 m)보다 조금 짧게. 철창 틈으로
-          # 빠진 빔이 실시간에도 "여기 비어 있다"고 라이트레이싱하며 우리가
-          # 방금 지도에 그려 넣은 벽을 스스로 지울 수 있습니다 (§10-10 의
-          # "로컬 코스트맵이 철창을 스스로 지웁니다" — 정적 지도판은 0단계로
-          # 막았지만 실시간 코스트맵판은 이 파라미터가 유일한 방어선입니다).
-          # §10-17 이 정적 지도에 쓴 것과 같은 논리를 실시간 계층에도 그대로
-          # 적용한 것— 미검증, 실주행에서 벽이 지워지면 더 줄이세요.
-          raytrace_max_range: 3.5
-          raytrace_min_range: 0.0
-          obstacle_max_range: 3.0
-          obstacle_min_range: 0.0
-      static_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
-        map_subscribe_transient_local: True
-      always_send_full_costmap: True
-
-global_costmap:
-  global_costmap:
-    ros__parameters:
-      update_frequency: 1.0
-      publish_frequency: 1.0
-      global_frame: map
-      robot_base_frame: base_footprint
-      use_sim_time: False
-      footprint: "[[0.167,0.215],[0.167,-0.215],[-0.318,-0.215],[-0.318,0.215]]"
-      resolution: 0.05
-      track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
-      obstacle_layer:
-        plugin: "nav2_costmap_2d::ObstacleLayer"
-        enabled: True
-        observation_sources: scan
-        scan:
-          topic: /scan
-          max_obstacle_height: 2.0
-          clearing: True
-          marking: True
-          data_type: "LaserScan"
-          raytrace_max_range: 3.5   # local_costmap 과 같은 이유 (위 주석)
-          raytrace_min_range: 0.0
-          obstacle_max_range: 3.0
-          obstacle_min_range: 0.0
-      static_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
-        map_subscribe_transient_local: True
-      inflation_layer:
-        plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.22
-      always_send_full_costmap: True
-
 map_server:
   ros__parameters:
     use_sim_time: False
-    # 0단계에서 닫은 지도. 원본(철창 누수 있는) tetra_lab_main 이 아니라
-    # 반드시 이 파일이어야 합니다 — §10-17.
-    yaml_filename: "/home/han/maps/tetra_lab_closed.yaml"
-
-planner_server:
-  ros__parameters:
-    expected_planner_frequency: 20.0
-    use_sim_time: False
-    planner_plugins: ["GridBased"]
-    GridBased:
-      plugin: "nav2_navfn_planner/NavfnPlanner"
-      tolerance: 0.5
-      use_astar: false
-      # 기본 true -> false. 미지(205)를 갈 수 있는 곳으로 보지 않겠다는
-      # 0단계와 같은 원칙입니다 — "자유 공간은 주행으로만 만들 수 있다."
-      # 이 방은 이미 대부분 자유로 채워져 있어 실질적 제약은 크지 않고,
-      # 대신 못 가본 구석으로 계획이 새는 경우를 원천 차단합니다.
-      allow_unknown: false
-
-smoother_server:
-  ros__parameters:
-    use_sim_time: False
-    smoother_plugins: ["simple_smoother"]
-    simple_smoother:
-      plugin: "nav2_smoother::SimpleSmoother"
-      tolerance: 1.0e-10
-      max_its: 1000
-      do_refinement: True
-
-behavior_server:
-  ros__parameters:
-    costmap_topic: local_costmap/costmap_raw
-    footprint_topic: local_costmap/published_footprint
-    cycle_frequency: 10.0
-    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
-    spin:
-      plugin: "nav2_behaviors/Spin"
-    backup:
-      plugin: "nav2_behaviors/BackUp"
-    drive_on_heading:
-      plugin: "nav2_behaviors/DriveOnHeading"
-    wait:
-      plugin: "nav2_behaviors/Wait"
-    assisted_teleop:
-      plugin: "nav2_behaviors/AssistedTeleop"
-    global_frame: odom
-    robot_base_frame: base_footprint
-    transform_tolerance: 0.1
-    use_sim_time: False
-    simulate_ahead_time: 2.0
-    # FollowPath 의 max_vel_theta(0.2) 와 맞췄습니다. 기본 1.0/0.4 를 그대로
-    # 두면 min > max 가 되어 Spin 복구 동작(§10-18 3단계에서 쓸 수 있는
-    # recovery)이 아예 실패합니다.
-    max_rotational_vel: 0.2
-    min_rotational_vel: 0.1
-    rotational_acc_lim: 3.2
+    # 2026-08-24: 다른(더 낮게 장착된) 로봇으로 같은 건물을 매핑한 지도로
+    # 교체. 38.85 x 61.95 m, 기존 tetra_lab_closed(3~4 m 방)보다 훨씬 큰
+    # 범위 — 건물 한 층 전체. 저상 장애물을 tetra 라이다(1.048 m)가 못
+    # 보는 문제는 local_costmap 에 static_layer 를 추가해 대응함 (위 참고).
+    yaml_filename: "/home/han/maps/map_20260821_144451_final.yaml"
 
 robot_state_publisher:
   ros__parameters:
     use_sim_time: False
 
-waypoint_follower:
-  ros__parameters:
-    use_sim_time: False
-    loop_rate: 20
-    stop_on_failure: false
-    waypoint_task_executor_plugin: "wait_at_waypoint"
-    wait_at_waypoint:
-      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
-      enabled: True
-      waypoint_pause_duration: 200
-
-velocity_smoother:
-  ros__parameters:
-    use_sim_time: False
-    smoothing_frequency: 20.0
-    scale_velocities: False
-    feedback: "OPEN_LOOP"
-    max_velocity: [0.05, 0.0, 0.2]
-    min_velocity: [-0.05, 0.0, -0.2]
-    max_accel: [2.5, 0.0, 3.2]
-    max_decel: [-2.5, 0.0, -3.2]
-    odom_topic: "/odometry/filtered"
-    odom_duration: 0.1
-    deadband_velocity: [0.0, 0.0, 0.0]
-    velocity_timeout: 1.0

@@ -38,12 +38,24 @@ sudo nmcli con up lidar
 # 2. FTDI 지연 낮추기 — 빼먹으면 오도메트리가 끊깁니다
 sudo sh -c 'echo 1 > /sys/bus/usb-serial/devices/ttyUSB0/latency_timer'
 
-# 3. 원격 RViz 를 쓸 때만 (아래 "노트북에서 보기" 참고)
+# 3. CPU 전 코어 최대 클럭 고정 — 자율주행 중 CPU 부하로 액션/서비스
+#    타임아웃이 나는 걸 줄여줍니다 (HANDOFF §10-23). 출력 없으면 정상.
+sudo jetson_clocks
+
+# 4. 원격 RViz 를 쓸 때만, 게스트 와이파이인 경우만 (아래 "노트북에서 보기" 참고)
 fast-discovery-server --server-id 0 --udp-port 11811 &
 ```
 
 > 2번은 udev 규칙에 넣어뒀지만 실제로는 잘 안 먹습니다. USB 를 다시 꽂을
 > 때마다 16 으로 돌아가므로 그때마다 다시 실행하세요. 이유는 HANDOFF §10-3.
+> 젯슨 자체를 안 껐다면(AMR 본체 전원만 껐다 켠 경우) 이 값은 유지되니
+> 매번 다시 안 해도 됩니다 — `cat` 으로 먼저 확인하세요.
+>
+> **개인 핫스팟에 물려 있다면 3번(discovery server)은 보통 필요 없습니다**
+> — 핫스팟은 멀티캐스트를 막지 않는 경우가 많습니다(2026-08-24 확인,
+> HANDOFF §10-22). `ros2 multicast send`/`receive` 로 양방향 먼저
+> 테스트해보고, 그냥 되면 아래 어디에도 `ROS_DISCOVERY_SERVER`,
+> `FASTRTPS_DEFAULT_PROFILES_FILE` export 안 해도 됩니다.
 
 ## SLAM 실행
 
@@ -135,9 +147,18 @@ rviz2 -d /opt/ros/humble/share/nav2_bringup/rviz/nav2_default_view.rviz
 
 **RViz 에서:**
 
-1. 로봇을 매핑 시작했던 자리(지도 원점 근처)로 옮기고, 실제 방향과 맞춰서 `2D Pose Estimate` 로 위치 지정.
+1. **로봇이 지금 실제로 있는 자리**(어디든 상관없음, 옮길 필요 없음)를 지도에서
+   찾아서 그 위치·방향 그대로 `2D Pose Estimate` 로 찍기. 이전 세션이 어디서
+   끝났는지 절대 가정하지 말 것 — 특히 teleop/자율주행 중간에 전원을 끈
+   뒤라면 로봇이 원점이 아닌 곳에 있을 수 있습니다 (HANDOFF §10-23).
 2. `Navigation 2` 패널의 `Localization` 이 `active` 로 바뀌는지 확인.
 3. `Nav2 Goal` 로 목표 지정 — **1 m 안쪽부터, 비상정지에 손 얹고, 바닥 비운 채로.**
+   짧은 목표로 몇 번 성공한 뒤에만 먼 목표로 늘리세요 — 먼 목표(약 10 m)는
+   젯슨 CPU 부하로 액션/서비스 타임아웃이 나서 반복 실패한 사례가 있습니다
+   (HANDOFF §10-23, `sudo jetson_clocks` 로 완화 시도).
+4. 목표를 보낸 뒤엔 `Navigation 2` 패널의 `Feedback` 을 꼭 확인하세요.
+   `aborted`/`failed` 인데 모르고 다시 목표를 찍으면, 그때마다 새로 spin/backup
+   복구가 돌아서 "혼자 왔다갔다 회전한다"처럼 보입니다 — 실은 매번 새 시도입니다.
 
 > 지금 설정은 후진을 못 냅니다 (`min_vel_x: 0.0`) — 목표가 뒤에 있으면 제자리
 > 회전 후 전진합니다. 앞 공간을 미리 비워두세요.
@@ -326,8 +347,11 @@ source install/setup.bash
 | 증상 | 먼저 볼 것 |
 |---|---|
 | `BV round trip failed: short BV reply` | ① 로봇 전원 ② 비상정지 ③ `latency_timer` — 이 순서. 프로토콜 코드는 마지막 (HANDOFF §10-3, §10-4) |
-| `emergency stop engaged at the robot` | 로봇의 빨간 버튼을 돌려 해제 |
-| 노트북에서 토픽이 2개만 보임 | 게스트 와이파이 멀티캐스트 차단. `ros2 daemon stop` 했는지 확인 (HANDOFF §10-1) |
-| `/scan` 이 10 Hz 가 안 나옴 | 젯슨의 크롬·VSCode 를 닫으세요. CPU 부족입니다 |
-| RViz 에 지도가 안 보임 | Map 디스플레이의 Durability 가 `Transient Local` 인지 확인 |
+| `emergency stop engaged at the robot` | 대부분 버튼과 무관한 stale 에러 래치입니다 — `tetra_drive_node` 가 기동 시 `CG`(Error Reset) 를 자동으로 보내서 이제 보통 저절로 풀립니다 (HANDOFF §10-21). 그래도 계속 뜨면 그때는 진짜 버튼을 확인하세요 |
+| 노트북에서 토픽이 2개만 보임 | 게스트 와이파이 멀티캐스트 차단. `ros2 daemon stop` 했는지 확인 (HANDOFF §10-1). 핫스팟이면 이 문제 자체가 없을 수 있음 (§10-22) |
+| `/scan` 이 10 Hz 가 안 나옴 | 젯슨의 크롬·VSCode 를 닫으세요. CPU 부족입니다. `sudo jetson_clocks` 도 도움됨 |
+| RViz 에 지도가 안 보임 | ① Map 디스플레이의 Durability 가 `Transient Local` 인지 ② TF 는 정상인데(`Global Status: Ok`) `Map` 만 `No map received` 면 `ros2 lifecycle set /map_server deactivate` 후 `activate` 로 재발행 유도 (HANDOFF §10-11) |
 | SLAM 이 조용히 아무것도 안 함 | 라이다 `frame_id` 가 `velodyne_link` 인지 (`velodyne` 이면 TF 를 못 찾습니다) |
+| `Nav2 Goal` 줘도 반응 없음, RViz 에 `Send goal call failed` | `ros2 lifecycle get /bt_navigator` 로 `inactive` 인지 확인. launch 중 bond 타임아웃으로 활성화가 중간에 멈춘 것. `bond_timeout` 을 10 초로 올려둬서 이제 잘 안 나지만(HANDOFF §10-22), 그래도 나면 §10-21 의 수동 activate 순서로 복구 |
+| 먼 거리(≈10 m) Nav2 Goal 이 계속 spin/backup 반복하다 실패 | 젯슨 CPU 과부하 의심. `sudo jetson_clocks`, VSCode/Claude Code 종료 후 재시도 (HANDOFF §10-23) |
+| RobotModel 에 `No transform from [rear_caster_link]` | 2026-08-24 에 고쳐짐 (`tetra_drive_node` 가 캐스터 조인트도 발행) — 여전히 뜨면 재빌드 안 된 것 |

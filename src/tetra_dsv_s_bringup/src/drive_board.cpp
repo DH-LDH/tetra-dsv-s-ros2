@@ -170,6 +170,15 @@ int DriveBoard::read_frame(uint8_t * buf, size_t max_len)
   return -1;
 }
 
+bool DriveBoard::reset_error()
+{
+  uint8_t p[5] = {STX, 'C', 'G', ETX, 0};
+  p[4] = lrc(&p[1], 3);
+  if (!write_frame(p, 5)) {return false;}
+  uint8_t rx[MAX_FRAME];
+  return read_frame(rx, MAX_FRAME) > 0;
+}
+
 bool DriveBoard::set_velocity_mode()
 {
   uint8_t p[7] = {STX, 'C', 'Z', '1', '1', ETX, 0};

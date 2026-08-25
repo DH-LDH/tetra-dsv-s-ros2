@@ -126,6 +126,14 @@ def generate_launch_description():
             "use_sim_time": False,
             "autostart": True,
             "node_names": ["map_server", "amcl"],
+            # Default 4.0s. §10-1/§10-11 already document wireless DDS
+            # discovery jitter on the guest network; when a node's bond
+            # takes longer than this to connect, the manager aborts bringup
+            # on the spot and leaves every later node stuck 'inactive'
+            # forever (HANDOFF §10-19, hit again 2026-08-24). 10s gives the
+            # bond time to survive that jitter instead of needing a manual
+            # `ros2 lifecycle set ... activate` recovery every session.
+            "bond_timeout": 10.0,
         }],
     )
 
@@ -196,6 +204,9 @@ def generate_launch_description():
             "node_names": ["controller_server", "smoother_server", "planner_server",
                           "behavior_server", "bt_navigator", "waypoint_follower",
                           "velocity_smoother"],
+            # See lifecycle_manager_localization above - same wireless-jitter
+            # bond timeout, same fix.
+            "bond_timeout": 10.0,
         }],
     )
 

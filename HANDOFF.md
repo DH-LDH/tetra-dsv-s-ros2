@@ -1078,6 +1078,22 @@ SLAM 문제로 단정하지 마세요.** 2026-08-14 에 실제로 그렇게 오�
 `map->odom` / `odom->base_footprint` 분해). 네트워크 아티팩트는 젯슨 자신의
 TF 트리를 돌릴 수 없습니다.
 
+**추가 (2026-08-24) — 노트북 RViz에서 "No map received".** TF는 정상(`Global
+Status: Ok`)인데 `Map` 디스플레이만 계속 `Status: Warn / No map received`인
+경우가 있었습니다. `map_server`는 지도를 **활성화 시점에 딱 한 번만**
+transient_local로 발행합니다 — 그 순간 노트북 쪽 구독이 아직 안 맺어져
+있었거나 무선 구간에서 그 패킷이 유실되면, 이후로는 재발행 기회 자체가
+없습니다(§10-11의 노트북측 수신 열화가 원인 제공). **해결: RViz가 이미
+구독을 맺은 상태에서 `map_server`를 한 번 더 activate 시켜 재발행을
+유도.**
+
+```bash
+ros2 lifecycle set /map_server deactivate
+ros2 lifecycle set /map_server activate
+```
+
+TF는 이미 살아있는데 유독 Map만 비어 있다면 이 순서로 의심할 것.
+
 ### 10-12. 2026-08-14 오전 결과
 
 | 계통 | 결과 |
@@ -1554,3 +1570,503 @@ time (extrapolation)` 경고가 떴지만 무해했습니다 — 그 직후 `Set
 - 오늘은 좁은 초기 구간(원점 근처)에서만 주행. 방 전체를 가로지르는 긴
   주행, 장애물(§10-9 사각지대) 회피 시험은 아직 안 함.
 - RealSense D455 미장착 상태 그대로 — 1 m 아래 장애물은 여전히 안 보임.
+
+### 10-21. 2026-08-19 저녁 — ⚠ Nav2 Goal 이 아무 반응 없던 것: bond 타임아웃으로 절반만 켜진 스택
+
+박사님이 시연 보러 오시는 상황에서 실제로 겪었습니다. `2D Pose Estimate`
+는 계속 잘 됐는데(`initialPoseReceived` 가 매번 찍힘) **`Nav2 Goal` 을 몇 번을
+줘도 `bt_navigator` 로그에 목표를 받았다는 줄이 단 한 줄도 없었습니다.**
+RViz 쪽에는 `Send goal call failed` 가 떴습니다.
+
+**원인.** launch 시작 시점 로그를 보니:
+
+```
+Activating controller_server -> connected with bond
+Activating smoother_server   -> connected with bond
+Activating planner_server    -> (184초 뒤) ERROR: Server planner_server was
+                                 unable to be reached after 4.00s by bond.
+                                 Failed to bring up all requested nodes.
+                                 Aborting bringup.
+```
+
+`lifecycle_manager_navigation` 은 노드를 순서대로 하나씩 활성화하면서 각
+노드의 **bond**(생존 확인용 하트비트)가 **4초 안에** 연결되길 기다립니다.
+무선 + discovery server 경유 지연(§10-1, §10-11 에 이미 기록된 것과 같은
+현상) 때문에 `planner_server` 의 bond 연결이 4초를 넘겼고, 매니저는
+**그 자리에서 전체 기동 절차를 포기**했습니다. `controller_server` 와
+`smoother_server` 만 `active` 로 남고, **`planner_server` 뒤 순서였던
+`behavior_server`, `bt_navigator`, `waypoint_follower`, `velocity_smoother`
+는 시도조차 되지 않고 영원히 `inactive` 로 남았습니다.**
+
+**증상이 헷갈리는 이유.** `ros2 topic list`, `ros2 action list` 로 보면
+`/navigate_to_pose` 액션 서버가 정상적으로 보입니다 (`bt_navigator` 프로세스
+자체는 살아있고 `configure` 까지는 됐으니까요) — 그래서 "서버는 있는데 왜
+반응이 없지"로 헷갈리기 쉽습니다. **`ros2 lifecycle get <node>` 로 상태를
+직접 봐야 `inactive` 인 게 드러납니다.**
+
+**응급 복구 — 전체 재기동 없이, AMCL 위치추정을 안 잃고 고쳤습니다:**
+
+```bash
+ros2 lifecycle set /behavior_server activate
+ros2 lifecycle set /bt_navigator activate
+ros2 lifecycle set /waypoint_follower activate
+ros2 lifecycle set /velocity_smoother activate
+```
+
+순서대로 하나씩 (lifecycle_manager 가 원래 하려던 순서와 동일). 넷 다
+`Transitioning successful` 나오면 `ros2 lifecycle get` 으로 7개 노드
+(`controller_server`, `smoother_server`, `planner_server`, `behavior_server`,
+`bt_navigator`, `waypoint_follower`, `velocity_smoother`) 전부 `active` 인지
+재확인. 이후 목표 재전송 정상 동작 확인.
+
+**주의 — `velocity_smoother` 도 같이 꺼져 있었습니다.** 이건 특히 위험한
+조합입니다 — `controller_server` 가 살아서 경로 계산은 되는데
+`velocity_smoother` 가 죽어 있으면 `cmd_vel_nav -> cmd_vel` 리매핑 마지막
+단계가 없어서 **최종 `/cmd_vel` 이 아예 안 나갑니다.** "명령을 계산하는데
+로봇이 안 움직인다"는 증상이 나올 수 있는 또 다른 경로입니다.
+
+**앞으로 이 실기 환경(게스트망+discovery server)에서는 매번 launch 직후
+`ros2 lifecycle get` 으로 7개 노드 상태를 확인하는 걸 습관으로 삼아야
+합니다.** "`Managed nodes are active` 로그가 찍혔다"만 믿으면 안 됩니다 —
+그 로그도 사실 이번엔 아예 안 찍혔는데(Aborting bringup 으로 끝났으므로)
+한참 뒤에 무심코 넘어갈 뻔했습니다.
+
+---
+
+### 10-20. 2026-08-24 — 다른 로봇이 매핑한 지도로 교체, local_costmap 에 static_layer 추가 (미검증)
+
+**아직 실기에서 안 돌려봤습니다.** 아래는 설정 변경 내역과 그 근거만 남깁니다.
+
+**지도 교체.** `/home/han/maps/map_20260821_144451_final.yaml`(+`.pgm`)을
+받아서 `map_server.yaml_filename` 을 여기로 바꿨습니다
+(`nav2_params.yaml` §13). 기존 `tetra_lab_closed`(3~4 m 방)와 달리
+**38.85 x 61.95 m, 건물 한 층 전체** 규모 — 사용자 확인상 tetra 가 실제로
+놓일 공간과 같은 건물이 맞습니다. `negate:0`/픽셀 관례는 정상(회색=미지,
+흰색=자유, 검은 얇은 선=벽)이라 yaml 값 자체는 손대지 않았습니다.
+
+이 지도는 **tetra보다 낮게 장착된 라이다를 쓰는 다른 로봇**이 만든 것이라,
+tetra 라이다(장착고 1.048 m, §10-9)가 못 보는 낮은 장애물(책상다리·의자
+등)이 지도에는 점유로 찍혀 있을 수 있습니다. 사용자가 원하는 동작은 —
+tetra 스스로는 그 장애물을 실시간으로 볼 수 없어도, **이 지도에 있는 걸
+그대로 신뢰해서 피해가는 것.**
+
+**local_costmap 에 static_layer 추가.** 기존엔 `global_costmap`
+(`plugins: [static_layer, obstacle_layer, inflation_layer]`)만 정적 지도를
+썼고, `local_costmap` 은 `plugins: [obstacle_layer, inflation_layer]`뿐이라
+`static_layer` 설정 블록이 있는데도 목록에 안 들어가 죽어있었습니다(아마
+nav2_bringup 기본 템플릿을 그대로 남긴 흔적). 그 상태면 global costmap
+경로계획은 저상 장애물을 피해가도 DWB 로컬 컨트롤러(`controller_server`)는
+실시간 스캔(`obstacle_layer`)만 보고 판단하므로 좁은 구간에서 스쳐 지나갈
+위험이 있었습니다. `local_costmap.plugins` 에 `static_layer` 를 맨 앞에
+추가해 이 격차를 없앴습니다. `obstacle_layer` 의 실시간 clearing 은 자기
+레이어만 지우고 `static_layer` 의 lethal 표시엔 영향을 못 주므로, tetra가
+그 장애물을 계속 못 보고 있어도 지워지지 않습니다 — 의도한 동작.
+
+**실기 전 확인할 것:**
+- RViz 에서 local/global costmap 레이어를 직접 보고 저상 장애물 지점이
+  실제로 lethal(보라/검정)로 남아있는지 확인.
+- `inflation_radius: 0.22`(로컬), `0.22`(글로벌)가 이 건물 규모의 복도
+  폭에서도 여전히 적절한지 — 기존 튜닝은 3~4 m 방 기준이었음.
+- `laser_max_range: 4.0`(AMCL), `raytrace_max_range: 3.5` /
+  `obstacle_max_range: 3.0`(costmap) 은 전부 작은 방 기준으로 잡은 값.
+  건물 규모에서 correctness 를 깨진 않지만(그냥 보수적으로 짧은 범위),
+  긴 복도에서 장애물 감지 거리가 짧다는 점은 인지하고 시작할 것.
+- `check_scan_map_fit.py` 로 매칭률 확인 — 저상 장애물 지점은 매칭률이
+  낮게 나오는 게 정상(§10-13 참고, tetra 라이다가 그 높이를 못 보므로).
+
+---
+
+### 10-21. ⚠ 로봇 본체 전원을 껐다 켜면 구동보드가 "EMG"로 걸린 채 뜹니다 — 버튼과 무관
+
+**증상.** 로봇 본체(젯슨 아님, 모터·구동보드·라이다 쪽 배전) 전원을 껐다
+켰더니 `tetra_drive_node`가 `BV round trip failed: emergency stop engaged
+at the robot`를 계속 뱉었습니다. **비상정지 버튼은 눌려 있지 않았습니다**
+(사용자가 직접 확인, 후면 버튼도 돌려서 재확인).
+
+**원인.** `drive_board.cpp`의 기존 주석은 "rx[1]==0x32 는 E-stop"이라고
+2026-08-13 실측을 근거로 적어뒀는데, 매뉴얼 표4-4(구동보드 모터 에러코드
+표)를 다시 보니 실제로는:
+
+| 코드 | 의미 |
+|---|---|
+| 0x30 ('0') | 정상 |
+| 0x31 ('1') | Emergency Stop (버튼) |
+| 0x32 ('2') | **모터 홀센서/모터라인 에러** |
+
+즉 우리 코드의 `last_error_ = "emergency stop engaged"` 문구는 **오해를
+유발하는 라벨**이었을 가능성이 있습니다. 다만 이게 진짜 홀센서/모터라인
+단선인지, 아니면 전원 인가 순서 문제로 걸린 stale 에러 래치인지는 직접
+확인이 필요했습니다.
+
+**진단 (`probe_cg.py`, 바퀴 안 돌림 — BV(0,0) 조회 + CG만 전송):**
+
+```
+[0] BV 정지명령 (CG 이전)    : raw 02 32 03 31   rx[1]=0x32
+[1] Error Reset (CG)                              rx[1]=0x30
+[2] CZ11                                          rx[1]=0x30
+[3] DB11                                           rx[1]=0x30
+[4] BV 정지명령 (CG 이후)    : 16바이트 정상 오도메트리, rx[1]=0x30
+```
+
+**`CG`(Error Reset) 한 번으로 완전히 풀렸습니다.** 버튼을 만지지 않았는데
+풀렸다는 것 자체가 "진짜 살아있는 EMG 신호"가 아니라 **전원 인가 시점에
+구동보드가 부팅하면서 걸어두는 stale 에러 래치**라는 뜻입니다 — 매뉴얼
+4-4-9절이 정확히 이 용도("구동 보드에 발생한 모든 Error를 초기화")로
+`CG`를 문서화하고 있습니다.
+
+**고침.** `DriveBoard::reset_error()`(`CG` 전송) 를 추가하고,
+`tetra_drive_node`의 초기화 시퀀스 맨 앞 — `set_velocity_mode()`/
+`set_servo()`보다 먼저 — 에서 항상 호출하도록 바꿨습니다. 이제 로봇
+본체를 껐다 켜도 `navigation.launch.py`/`slam.launch.py` 기동 시 자동으로
+클리어됩니다. 재빌드 필요 (`colcon build --packages-select
+tetra_dsv_s_bringup`).
+
+**남은 의문.** `0x32`가 매뉴얼 표4-4의 "모터 홀센서/모터라인 에러"와 같은
+코드인지, 아니면 BV 응답의 FLAG 바이트가 그 표와 무관한 별도 enum(예:
+"에러 있음"을 뭉뚱그려 나타내는 값)인지는 확정 못 했습니다. 실제 홀센서/
+모터라인 단선이라면 `CG`로 안 풀렸어야 하는데 풀렸으니, 최소한 이번
+사례는 stale 래치였던 게 맞습니다. 진짜 하드웨어 결함이 있을 때 `CG` 이후
+에도 다시 `0x32`로 돌아오는지는 미검증 — 다음에 이 에러를 보면 `CG` 이후
+몇 초 안에 재발하는지 확인할 것.
+
+---
+
+### 10-22. 2026-08-24 — 같은 날 나머지: bond_timeout, 캐스터 조인트, 노트북 RViz 실전 기록
+
+**`lifecycle_manager` bond_timeout 기본값(4.0s)이 §10-19 멈춤의 진짜 근본
+원인이었습니다.** 오늘도 같은 증상이 재발했습니다 — `map_server`/`amcl`이
+`Configuring` 이후 `Activating` 로그도 없이 멈췄고, 그 여파로
+`planner_server`의 `global_costmap`이 `map` TF를 무한 대기하며 멈춰
+`lifecycle_manager_navigation`도 같이 아보트. §10-1/§10-11이 이미 기록한
+무선 discovery 지연을 감안하면 4초는 너무 짧습니다. `navigation.launch.py`
+의 두 `lifecycle_manager` 노드 파라미터에 `bond_timeout: 10.0`을 추가했습니다
+— launch 파일은 symlink install이라 재빌드 불필요, 다음 실행부터 바로
+반영됩니다. **그래도 멈추면** 응급 복구는 여전히 유효합니다:
+
+```bash
+ros2 lifecycle set /map_server activate
+ros2 lifecycle set /amcl activate
+# 그래도 planner_server 이후가 inactive면 순서대로:
+ros2 lifecycle set /behavior_server activate
+ros2 lifecycle set /bt_navigator activate
+ros2 lifecycle set /waypoint_follower activate
+ros2 lifecycle set /velocity_smoother activate
+```
+
+**캐스터 링크 RobotModel 에러.** `rear_caster_joint`가 URDF에서
+`continuous`(Gazebo 마찰 유지 목적, §URDF 주석)인데 `tetra_drive_node`가
+`left_wheel_joint`/`right_wheel_joint`만 `/joint_states`에 발행해서
+`robot_state_publisher`가 `rear_caster_link`의 TF를 못 만들었습니다
+(RViz: "No transform from [rear_caster_link] to [map]"). 캐스터는 무센서
+자유회전 바퀴라 실제 각도를 잴 방법이 없으니, 고정값 0.0을 같이
+발행하도록 고쳤습니다(`tetra_drive_node.cpp`) — 순수 시각화 문제였고 Nav2
+동작(코스트맵 등)엔 원래 영향 없었습니다. 재빌드함.
+
+**노트북 RViz — `nav2_default_view.rviz` 쓸 것.** 맨 `rviz2`로 빈 설정에서
+디스플레이를 하나씩 추가하는 건 이번에 처음 해봐서 오래 걸렸습니다.
+`nav2_bringup` 패키지에 이미 완성된 설정이 있습니다 — `RobotModel`, `TF`,
+`LaserScan`, `Map`, `AMCL Particle Swarm`(=ParticleCloud), 코스트맵,
+`Navigation 2` 컨트롤 패널까지 한 번에 뜹니다:
+
+```bash
+rviz2 -d /opt/ros/humble/share/nav2_bringup/rviz/nav2_default_view.rviz
+```
+
+`Bumper Hit`/`Realsense` 항목은 scout-ur3e 템플릿 잔재라 TETRA엔 안 맞음 —
+체크 해제하고 무시. `Navigation 2` 패널의 `Localization/Navigation: unknown`
+은 위 수동 lifecycle 복구를 거치면(매니저 자신의 bond 신호를 못 받아서)
+뜰 수 있는데, 개별 노드가 실제로 `active`면 기능상 문제 아님.
+
+**`/map`이 TF는 살아있는데 안 뜨는 경우.** §10-11 "추가 (2026-08-24)"
+항목 참고 — `map_server` 재activate로 재발행 유도.
+
+**다음에 할 일 — Wi-Fi를 핫스팟으로.** §10-1의 사내 게스트망 멀티캐스트
+차단이 오늘 겪은 문제 상당수(discovery 지연, bond timeout, `/map` 수신
+유실)의 근본 원인입니다. 다음 전원 재기동부터는 개인 핫스팟으로 전환
+예정 — 이러면 Discovery Server 우회 자체가 필요 없어질 수 있습니다(핫스팟이
+멀티캐스트를 막지 않는다면). **단, 일부 핸드폰 핫스팟은 클라이언트 격리
+(AP isolation)를 켜두어 기기 간 통신 자체를 막기도 하니** 완전히 안심할
+수는 없음 — 전환 후 plain discovery(Discovery Server 없이 `ROS_DOMAIN_ID`
+만 맞추고 `ros2 topic list`)부터 먼저 시험해보고, 안 되면 §10-1 그대로
+Discovery Server로 복귀. 핫스팟 IP 대역은 게스트망(10.101.111.244)과
+다를 거의 확실하니 `super_client.xml`의 서버 주소와 양쪽
+`ROS_DISCOVERY_SERVER` 값도 새 IP로 갱신해야 함.
+
+---
+
+### 10-23. 2026-08-24 — 첫 실주행 Nav2 Goal 시도, 결과와 미해결 사항
+
+**핫스팟 전환은 완전히 성공.** 게스트망 문제(§10-1) 없이 멀티캐스트
+양방향 확인됐고(젯슨 172.20.10.6 ↔ 노트북 172.20.10.2), discovery server
+자체가 필요 없어짐. `bond_timeout: 10.0`(§10-22) 효과까지 겹쳐서
+`navigation.launch.py` 9개 노드가 수동 복구 없이 전부 한 번에 `active`가
+됐음 — 이번 세션 최초.
+
+**짧은 목표(~2m)는 성공.** Spin 복구 1회 후 `Goal succeeded`.
+
+**긴 목표(~9.6~10m)는 반복 실패.** `bt_navigator`가
+`compute_path_to_pose` 액션 서버 ack 타임아웃 + `global_costmap
+clear_entirely` 서비스 타임아웃을 겪었고, backup↔spin 복구를 여러 차례
+반복하다 매번 `Goal failed`로 끝남. **원인으로 보이는 것: 젯슨 CPU 과부하.**
+그 시점 `uptime` load average **4.18** — 이 Claude Code 세션(VSCode `code`
+프로세스 2개)이 각각 35%/29%를 먹고 있었음. 짧은 목표는 이 지연 창을
+안 만나고 끝나서 성공했을 가능성. **다음 실주행 전엔 이 세션(또는 무거운
+프로세스)을 내리고 젯슨 부하를 낮춘 뒤 긴 목표를 재시도해서, CPU 과부하
+가설이 맞는지 검증할 것.**
+
+**사용자 반응 — 실패마다 Nav2 Goal을 다시 찍은 것으로 보임.** 로그의
+목표 좌표가 매번 조금씩 다름(11.59→10.21→8.50→11.02, 전부 비슷한 방향) —
+로봇이 "혼자 앞뒤로 왔다갔다, 왼쪽으로 90도 회전"하는 것처럼 보인 건 실은
+"실패→정지 후 재전송" 사이클이 여러 번 반복된 것. RViz Navigation2
+패널의 `Feedback: aborted/failed` 표시를 매번 확인하는 습관이 필요함.
+
+**Teleop 시도 실패, 원인 미확인.** 원점으로 되돌리려고
+`teleop_twist_keyboard`(속도 0.1/0.3로 낮춰서)를 노트북에서 실행 안내했지만,
+`ros2 node list`에도 안 잡히고 `/cmd_vel`도 5초간 0건 — teleop 노드
+자체가 안 뜬 것으로 보임(노트북 쪽 `source /opt/ros/humble/setup.bash`
+누락 또는 `ROS_DOMAIN_ID` 불일치 의심, **확인 전에 사용자가 AMR 전원을
+통째로 꺼서 미해결로 남음**).
+
+**⚠⚠ 다음 세션 시작 시 반드시 알아야 할 것: 로봇이 원점(초기 2D Pose
+Estimate 위치)에 있지 않습니다.** 마지막 기록된 위치는 대략 map 좌표
+(7~11, -1 부근)이고, 정확한 최종 위치는 모릅니다(teleop 복귀 실패,
+AMR 전원 통째로 끔). **다음에 켤 때 로봇이 실제로 어디 있는지 눈으로
+먼저 확인하고, 그 위치 기준으로 "2D Pose Estimate"를 새로 찍을 것** —
+이전 세션 좌표를 절대 재사용하지 말 것.
+
+**속도 상향 기록.** `nav2_params.yaml`의 `FollowPath.max_vel_x/max_speed_xy`
+와 `velocity_smoother.max_velocity/min_velocity`를 0.05 → **0.15 m/s**로
+올림(사용자 지정, 2026-08-24). 후진(`min_vel_x`)은 여전히 0.0 — §의 후진
+불안정 이슈와 무관.
+
+---
+
+### 10-24. 2026-08-24 — planner_server 가 큰 지도에서 너무 느림(Dijkstra), 게스트망 RViz 는 결국 세그폴트
+
+**§10-23 의 "CPU 과부하가 원인" 진단은 절반만 맞았습니다.** VSCode 를 끄고
+`jetson_clocks` 까지 적용해 load average 를 4.18 → 0.98 로 낮춘 뒤에도,
+**짧은 목표(1.9m)에서조차 같은 spin/backup 반복 실패가 재현**됐습니다.
+로그를 다시 보니 진짜 원인은 따로 있었습니다:
+
+```
+[bt_navigator]: Begin navigating from current location (1.17, -0.15) to (2.86, -0.58)
+[planner_server]: Planner loop missed its desired rate of 20.0000 Hz. Current loop rate is 19.0656 Hz
+[planner_server]: Planner loop missed its desired rate of 20.0000 Hz. Current loop rate is 17.5176 Hz
+[bt_navigator]: Timed out while waiting for action server to acknowledge goal request for compute_path_to_pose
+[planner_server]: Planner loop missed its desired rate of 20.0000 Hz. Current loop rate is 11.3831 Hz
+...
+[planner_server]: Planner loop missed its desired rate of 20.0000 Hz. Current loop rate is 3.2969 Hz
+```
+
+목표가 시작되자마자 `planner_server` 자신의 내부 루프 속도가 19Hz에서
+**3Hz까지 떨어지면서** `compute_path_to_pose` 액션 서버 ack 타임아웃이
+납니다. **젯슨 CPU 전체 부하는 낮은데(0.98) planner_server 만 특정
+순간에 느려지는 패턴** — 이건 전역 CPU 경합이 아니라 **경로계획 알고리즘
+자체가 이 지도 크기에서 무거운 것**이라는 뜻입니다.
+
+**원인.** `nav2_params.yaml`의 `planner_server.GridBased.use_astar: false`
+(Dijkstra, 목표 방향과 무관하게 도달 가능한 공간을 넓게 탐색) — 옆 주석
+"기본 true -> false"는 사실 바로 아래 `allow_unknown` 에 대한 설명이었고,
+`use_astar` 자체는 그냥 Nav2 기본값이 손 안 댄 채 남아있던 것뿐입니다.
+3~4 m 방(수천 칸)에선 Dijkstra 든 A* 든 체감 차이가 없었지만, 오늘 지도는
+777x1239 = **약 96만 칸**이라 Dijkstra 의 전역 탐색 비용이 실제로 문제가
+됩니다.
+
+**고침.** `use_astar: true` 로 변경. 재시작 없이
+`ros2 param set /planner_server GridBased.use_astar true` 로 라이브
+반영도 검증(AMCL 위치추정 안 날아감). **아직 A* 적용 후 재시도 결과는
+검증 못 함** — 다음에 이어서 확인할 것.
+
+**게스트망 RViz 가 결국 세그폴트로 죽음.** §10-11 에 이미 기록된
+`Message Filter dropping message ... discarding message because the
+queue is full` (frame `odom`/`velodyne_link`) 증상이 몇 분간 계속되다
+`Segmentation fault (core dumped)`로 끝남. 이전엔 "화면만 나쁘다"였는데
+이번엔 진짜로 죽었습니다 — 지도가 커지고(777x1239) 디스플레이도
+늘어서(costmap x2 + particle cloud + laser scan + robot model) 노트북
+쪽 메시지 동기화 부담이 커진 탓으로 보입니다. **핫스팟(§10-22)에서는
+이 큐 오버플로우 자체가 안 생겼음** — 게스트망을 계속 써야 한다면
+디스플레이 개수를 줄이거나(특히 ParticleCloud), 가능하면 핫스팟으로
+돌아갈 것을 권함.
+
+---
+
+### 10-25. ⚠ 2026-08-25 — 원인 미확정: 모든 설정이 맞는데도 토픽이 2개만 보임
+
+**§10-1 의 게스트망 증상과 똑같아 보이지만 원인이 다릅니다.** §10-1 의
+세 가지 함정을 **전부 배제하고도** 재현됐습니다.
+
+**증상.** `navigation.launch.py` 기동 후 `ros2 topic list` 에
+`/parameter_events`, `/rosout` 둘만 보임. **노트북뿐 아니라 젯슨 자신에서
+`--no-daemon` 으로 조회해도 똑같이 2개** — 이게 §10-1 과 결정적으로
+다른 점입니다(§10-1 은 젯슨 로컬에서는 정상으로 보임).
+
+**배제한 것 (전부 확인함, 문제 없었음):**
+
+| 확인 항목 | 방법 | 결과 |
+|---|---|---|
+| discovery server 가 launch 보다 먼저 떴는가 | `ps -o lstart` | 13:29:54 vs 13:31:01 — 순서 맞음 |
+| launch 셸에 `ROS_DISCOVERY_SERVER` 가 걸렸는가 (§10-1 함정 3) | `/proc/<launch pid>/environ` | 걸려 있었음 |
+| 개별 노드가 그 변수를 상속받았는가 | `/proc/<map_server pid>/environ` 등 | 받았음 |
+| 노드들이 실제로 살아있는가 | `ps --ppid` | 18개 전부 정상 실행 |
+| 노드가 소켓을 열었는가 | `ss -unap` | 열려 있음 |
+| CLI 쪽 SUPER_CLIENT 프로파일 (§10-1 함정 1) | 명시 export 후 재조회 | 여전히 2개 |
+| ros2 데몬 캐시 (§10-1 함정 2) | `--no-daemon` | 여전히 2개 |
+| discovery server 자체 | GUID prefix `44.53...41`, 포트 11811 listening | 정상 |
+
+**해결 — 같은 명령으로 그냥 재시작.** launch 와 discovery server 를 둘 다
+죽이고 **완전히 동일한 순서·동일한 명령으로** 다시 띄우니 토픽 50개로
+정상화. **설정은 아무것도 안 바꿨습니다.**
+
+**원인 미확정.** 등록 핸드셰이크가 한 번 어긋난 것으로 보이나 이유는
+모릅니다. 짚이는 것은 젯슨에 네트워크 인터페이스가 3개(무선, 라이다 유선
+192.168.1.150, docker0)라 Fast DDS 가 locator announce 할 때 타이밍에 따라
+꼬일 수 있다는 정도인데 **근거 약함 — 검증 안 됨.** 재현 조건을 모르므로
+현장에서 다시 날 수 있습니다.
+
+**실용 대처 — launch 직후 매번 이걸 확인할 것:**
+
+```bash
+ros2 topic list | wc -l     # 젯슨에서
+```
+
+- **50 근처** → 정상. 노트북으로 진행.
+- **2** → 이 버그. launch + discovery server 둘 다 죽이고 재시작.
+  (2026-08-25 에는 한 번에 해결됐음)
+
+> 핫스팟(§10-22)에서는 discovery server 자체를 안 쓰므로 이 문제의
+> 표면적이 줄어들 가능성이 있으나, 이 역시 검증 안 됨.
+
+---
+
+### 10-26. ⚠⚠ 2026-08-25 — spin/backup 반복의 진짜 원인은 `default_server_timeout: 20`(ms) 이었습니다
+
+**§10-23 의 "CPU 과부하" 진단, §10-24 의 "planner 가 느려서" 진단 모두
+빗나갔습니다.** 진짜 원인은 `bt_navigator` 의 타임아웃 설정 하나였습니다.
+
+**결정적 로그.** 목표 시작 직후 1초 구간을 정밀하게 보면:
+
+```
+929.200  bt_navigator: Begin navigating from (6.23, -0.88) to (11.24, -1.18)
+929.251  controller_server: Received a goal, begin computing control effort.
+930.302  controller_server: Passing new path to controller.      <- 경로 계산 성공!
+931.311  bt_navigator: Timed out while waiting for action server to
+                       acknowledge goal request for compute_path_to_pose
+931.332  bt_navigator: Node timed out while executing service call to
+                       global_costmap/clear_entirely_global_costmap.
+931.374  behavior_server: Running spin      <- 복구 동작 시작
+```
+
+**경로 계획은 성공하고 있었습니다** (`Passing new path to controller`).
+문제는 그 다음 — BT 가 planner 에게 다음 요청을 보내고 **"받았다"는 ACK 를
+기다리는 시간이 `default_server_timeout: 20`, 즉 20 밀리초**라는 것.
+planner_server 가 이 지도(96만 칸)에서 경로 하나 계산하는 데 ~1초가
+걸리는데, 계산 중이라 20ms 안에 ACK 를 못 하면 BT 는 **"서버가 죽었다"**
+로 판정하고 곧장 복구 동작(spin → backup)으로 넘어갑니다. 그게 사용자가
+본 "왼쪽으로 90도 돌았다가 후진했다가 전진" 입니다.
+
+**왜 §10-18 첫 자율주행 때는 안 드러났나.** 그때는 3~4 m 방(수천 칸)이라
+경로 계산이 수십 ms 에 끝나서 20ms 를 아슬아슬하게 맞췄습니다. 지도가
+커지자마자 즉시 터진 것.
+
+**고침 (`nav2_params.yaml`):**
+
+| 파라미터 | 기존 | 변경 | 이유 |
+|---|---|---|---|
+| `bt_navigator.default_server_timeout` | 20 (ms) | **1000** | 위 원인. 핵심 수정 |
+| `bt_navigator.bt_loop_duration` | 10 (ms) | **20** | "BT tick rate 100.00 exceeded" 해소 |
+| `planner_server.expected_planner_frequency` | 20.0 | **1.0** | 달성 불가한 목표치. 경고 스팸이 진짜 문제를 가렸음 |
+
+**✅ 실주행 검증 완료 (2026-08-25).** 수정 후 같은 지도에서:
+
+| 항목 | 수정 전 | 수정 후 |
+|---|---|---|
+| `acknowledge goal request` 타임아웃 | 목표마다 반복 | **0 건** |
+| 목표 성공 | 짧은 것 1회뿐 | **3회 연속 성공** |
+| 복구 동작(spin/backup) | 목표당 4~6회 | 전체 2회 |
+
+성공한 목표 중에는 **6.3 m** 짜리도 포함됩니다
+(`(4.69,-0.43) → (10.93,-1.38)`, 50초). 어제 이 거리대는 전부 실패했으므로,
+"짧은 목표만 된다"가 아니라 중거리도 정상화된 것이 확인됐습니다.
+
+**교훈 — 로그를 시간순으로 좁게 보세요.** §10-23/§10-24 에서 오진한 이유는
+`Planner loop missed its desired rate` 경고가 로그를 뒤덮어서 그것만 보고
+"planner 가 느리다"로 단정했기 때문입니다. 정작 바로 아래 줄의
+`Passing new path to controller`(=성공) 와 `Timed out ... acknowledge`
+(=ACK 실패) 조합을 못 봤습니다. **경고가 많이 찍히는 것과 그게 원인인
+것은 다릅니다.**
+
+---
+
+### 10-27. 노트북 RViz 세그폴트 — 게스트망 탓이 아니었음, 원인 미확정
+
+**§10-24 에서 "게스트망 때문"이라고 적은 것은 틀렸습니다.** 2026-08-25 에
+**핫스팟에서도 동일하게 재현**됐습니다:
+
+```
+[rviz]: Message Filter dropping message: frame 'velodyne_link' ...
+        for reason 'discarding message because the queue is full'
+[rviz]: Message Filter dropping message: frame 'odom' ... (동일)
+Segmentation fault (core dumped)
+```
+
+**시도했지만 효과 없었던 것.** 전송량이 원인이라고 보고
+`always_send_full_costmap` 을 `True → False` 로 바꿨습니다(전역 코스트맵이
+777x1239 = ~960 KB 를 1Hz 로 통째로 재전송하고 있었음). 대역폭은 확실히
+줄었지만 **세그폴트는 그대로 재현**됐습니다. 그래도 이 변경 자체는
+합리적이라 되돌리지 않았습니다.
+
+**남은 단서.** 큐가 차는 프레임이 항상 둘입니다:
+- `velodyne_link` → `LaserScan` 디스플레이
+- `odom` → `Controller` 그룹의 local plan
+
+젯슨 쪽 TF 발행 주기는 과하지 않습니다(EKF 30Hz, drive node 30Hz). 즉
+RViz 가 무선 구간의 TF 지터를 못 따라가 tf2 message filter 큐가 계속
+넘치고, 그 상태가 지속되면 RViz 가 죽는 것으로 보입니다. **RViz/tf2 쪽
+버그로 추정하나 확정 못 했습니다.**
+
+**실용 대처 (검증 안 됨, 다음에 확인할 것):**
+1. 노트북 RViz 에서 `LaserScan` 과 `Controller` 체크 해제 — 위 두 프레임의
+   message filter 를 아예 없앰. 주행 성공 여부(`Recoveries: 0`) 확인에는
+   이 둘이 필요 없음. 장애물 회피 테스트할 때만 `LaserScan` 을 잠깐 켤 것.
+2. 그래도 죽으면 젯슨 로컬 화면에서 RViz 실행(무선 미경유). 단 젯슨 CPU 를
+   쓰므로 차선책.
+
+**⚠ 안전.** RViz 가 죽어도 **로봇은 계속 자율주행합니다.** RViz 의 Pause
+버튼도 같이 사라집니다. 목표를 준 상태에서는 **반드시 비상정지 버튼에 손이
+닿는 위치**를 유지할 것. RViz 없이 멈추는 방법:
+
+```bash
+pkill -INT -f "ros2 launch tetra_dsv_s_bringup"   # 젯슨에서, 확실함
+```
+
+---
+
+### 10-28. 내 CLI 조회를 믿지 마세요 — 로그를 보세요
+
+2026-08-25 에 `ros2 topic list`/`node list`/`lifecycle get`/`tf2_echo` 가
+**젯슨 로컬에서조차** 비어 나오거나 "Node not found" 를 뱉는 일이 반복됐고,
+그 때문에 두 번 오진했습니다:
+
+- `map_server` 가 안 떴다고 판단 → 실제로는 정상 (재조회하니 나옴)
+- AMCL 이 `map` TF 를 안 낸다고 판단 → **실제로는 정상적으로 내고 있었음**
+
+**확실한 판별법은 launch 로그의 에러 문구 변화입니다:**
+
+| 로그 | 의미 |
+|---|---|
+| `Invalid frame ID "map" ... frame does not exist` | `map` 프레임 **없음** (초기 위치 미설정) |
+| `Extrapolation Error ... earliest data is at <시각>` | `map` 프레임 **있음** (시간대만 안 맞음) |
+
+두 번째로 바뀌었으면 AMCL 은 정상입니다. §10-25 의 discovery 불안정이
+CLI 조회에도 똑같이 영향을 줍니다.
+
+**부수 발견 — planner_server 가 오래된 목표에 갇힐 수 있음.**
+
+```
+[transformPoseInTargetFrame]: Extrapolation Error looking up target frame:
+Requested time 1787635026.25 but the earliest data is at time 1787635382.37
+```
+
+6분 전 타임스탬프의 목표를 계속 재시도하는데 TF 버퍼는 10초치뿐이라 영원히
+실패합니다. 새 목표를 보내도 안 풀렸고, **launch 재시작으로만 해결**했습니다.
+재현 조건 미확정.
