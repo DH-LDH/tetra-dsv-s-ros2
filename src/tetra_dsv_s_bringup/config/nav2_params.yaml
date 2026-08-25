@@ -107,14 +107,22 @@ local_costmap:
       robot_base_frame: base_footprint
       use_sim_time: False
       rolling_window: true
-      # 기본 3x3 m -> 2x2 m. 방(3.25 x 2.70 m 내부)보다 크면 무의미합니다
-      # (§10-18 표, 1.5~2.0 범위). 1.5 를 넣었더니 이 Nav2 빌드(1.1.20)는
-      # width/height 를 정수로 선언해 두어 실기에서 즉시
-      # InvalidParameterTypeException 으로 controller_server 가 죽었습니다
-      # (2026-08-19 실측). nav2_bringup 기본값도 3.0 이 아니라 3 인 이유가
-      # 이것 — 정수만 됩니다. 표 범위의 정수 상한인 2 를 씁니다.
-      width: 2
-      height: 2
+      # ⚠ 정수만 됩니다. 이 Nav2 빌드(1.1.20)는 width/height 를 정수로
+      # 선언해 두어 1.5 를 넣으면 실기에서 즉시
+      # InvalidParameterTypeException 으로 controller_server 가 죽습니다
+      # (2026-08-19 실측). nav2_bringup 기본값이 3.0 이 아니라 3 인 이유.
+      #
+      # 2x2 m -> 6x6 m (2026-08-25). 2 는 실험실 방(3.25 x 2.70 m) 기준으로
+      # "방보다 크면 무의미하다"는 논리로 잡은 값인데, 건물·공항 규모에서는
+      # 너무 좁습니다. rolling window 라 로봇 중심 ±1 m 밖의 물체는 로컬
+      # 코스트맵에 아예 안 들어가고, DWB 는 로컬 코스트맵만 보고 궤적을
+      # 고르므로 **즉각 회피 반응 거리가 1 m 밖에 안 됐습니다**
+      # (0.15 m/s 로 약 6.7초. 사람이 걸어오면 훨씬 짧아집니다).
+      # 6 이면 사방 3 m 로, 아래 obstacle_max_range(3.0)와 일치합니다.
+      # 계산 부담은 무시할 수준입니다 — 6x6 m @ 0.05 = 14,400 칸이고
+      # 전역 코스트맵은 이미 96만 칸입니다.
+      width: 6
+      height: 6
       resolution: 0.05
       # robot_radius 는 안 씁니다 — 앞뒤가 비대칭(base_link 기준 x
       # -0.318 ~ +0.167)이라 원형 근사가 실제보다 훨씬 크게 잡습니다.
@@ -137,11 +145,21 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        # 기본 0.55 -> 0.22. 방 양쪽 벽에서 1.1 m 씩(0.55*2) 고비용이 되면
-        # 2.4 m 짧은 변에서 planner 가 경로를 못 찾습니다 (§10-18 표).
-        # 0.20~0.25 범위의 중간값. 철창 틈(2~3 cm, §10-10)보다는 훨씬 커서
-        # 그 대책도 겸합니다.
-        inflation_radius: 0.22
+        # 기본 0.55 -> 0.22 (3~4 m 실험실 방 기준, §10-18 표) -> 0.35.
+        #
+        # inflation_radius 는 **장애물로부터의 거리**이고, 로봇 반폭
+        # (footprint 좌우 0.215 m)은 Nav2 가 따로 겹쳐 판정합니다. 즉
+        # 실제 측면 여유 = inflation_radius - 0.215 입니다:
+        #     0.22 -> 0.005 m (0.5 cm!)   0.35 -> 0.135 m
+        # 0.22 는 사실상 여유가 없어 옆구리가 스칠 정도로 붙습니다
+        # (2026-08-25 실주행에서 사용자가 육안으로 확인). 공항처럼 사람
+        # 옆을 지나야 하는 환경에는 부적절해서 올렸습니다.
+        #
+        # 대가: 양쪽 벽에서 0.35 m 씩 고비용이 되므로 폭 0.7 m 미만 통로는
+        # planner 가 경로를 못 찾습니다. 건물 복도는 보통 1 m 이상이라
+        # 문제없을 것으로 보지만 **좁은 구간에서 미검증**입니다. 경로를
+        # 못 찾는 구간이 나오면 이 값을 먼저 의심하세요.
+        inflation_radius: 0.35
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: True
@@ -203,7 +221,10 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.22
+        # local_costmap 과 반드시 같은 값으로 유지하세요 — 다르면 전역 경로가
+        # 지나갈 수 있다고 그린 곳을 로컬 컨트롤러가 막혔다고 보거나 그 반대가
+        # 됩니다. 0.22 -> 0.35 로 올린 이유는 local_costmap 쪽 주석 참고.
+        inflation_radius: 0.35
       # ⚠ 기본/기존 True -> False. 이 지도는 777x1239 = 약 96만 칸이라 전역
       # 코스트맵 한 장이 ~960 KB 입니다. True 면 그걸 publish_frequency(1Hz)
       # 마다 통째로 다시 보냅니다 — 무선으로 초당 8 Mbps 가 코스트맵 하나에
